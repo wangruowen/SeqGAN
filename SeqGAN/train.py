@@ -1,6 +1,6 @@
-from SeqGAN.models import GeneratorPretraining, Discriminator, Generator
-from SeqGAN.utils import GeneratorPretrainingGenerator, DiscriminatorGenerator
-from SeqGAN.rl import Agent, Environment
+from .models import GeneratorPretraining, Discriminator, Generator
+from .utils import GeneratorPretrainingGenerator, DiscriminatorGenerator
+from .rl import Agent, Environment
 from keras.optimizers import Adam
 import os
 import numpy as np
@@ -13,7 +13,7 @@ class Trainer(object):
     '''
     Manage training
     '''
-    def __init__(self, B, T, g_E, g_H, d_E, d_H, d_dropout, g_lr=1e-3, d_lr=1e-3,
+    def __init__(self, training_set_path, B, T, g_E, g_H, d_E, d_H, d_dropout, g_lr=1e-3, d_lr=1e-3,
         n_sample=16, generate_samples=10000, init_eps=0.1):
         self.B, self.T = B, T
         self.g_E, self.g_H = g_E, g_H
@@ -24,7 +24,7 @@ class Trainer(object):
         self.eps = init_eps
         self.init_eps = init_eps
         self.top = os.getcwd()
-        self.path_pos = os.path.join(self.top, 'data', 'kokoro_parsed.txt')
+        self.path_pos = training_set_path
         self.path_neg = os.path.join(self.top, 'data', 'save', 'generated_sentences.txt')
         self.g_data = GeneratorPretrainingGenerator(
             self.path_pos,
@@ -181,4 +181,5 @@ class Trainer(object):
         for i in range(self.B):
             txt = [self.g_data.id2word[id] for id in x[i].tolist()]
             label = y[i]
-            print('{}, {:.3f}: {}'.format(label, pred[i,0], ''.join(txt)))
+            if label == 0:
+                print('{}, {:.3f}: {}'.format(label, pred[i,0], ' '.join(txt)))

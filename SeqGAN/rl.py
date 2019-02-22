@@ -1,5 +1,5 @@
-from SeqGAN.models import Generator, GeneratorPretraining, Discriminator
-from SeqGAN.utils import DiscriminatorGenerator
+from .models import Generator, GeneratorPretraining, Discriminator
+from .utils import DiscriminatorGenerator
 import keras.backend as K
 import numpy as np
 
@@ -98,7 +98,7 @@ class Environment(object):
         self.B = data_generator.B
         self.T = data_generator.T
         self.n_sample = n_sample
-        self.BOS = data_generator.BOS
+        self.BOS = data_generator.vocab.BOS
         self.discriminator = discriminator
         self.g_beta = g_beta
         self.reset()
@@ -142,7 +142,8 @@ class Environment(object):
         for i in range(head):
             ids = self.get_state()[i]
             words = [self.data_generator.id2word[id] for id in ids.tolist()]
-            print(''.join(words))
+            print(ids.tolist())
+            print(' '.join(words))
         print('-' * 80)
 
 

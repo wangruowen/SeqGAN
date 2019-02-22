@@ -1,34 +1,55 @@
 import numpy as np
 import random
 import linecache
+import re
+from collections import Counter
 from keras.utils import Sequence
 from keras.utils.np_utils import to_categorical
+from keras.preprocessing.text import Tokenizer, text_to_word_sequence
+# from keras.preprocessing.sequence import pad_sequences
+
 
 class Vocab:
-    def __init__(self, word2id, unk_token):
-        self.word2id = dict(word2id)
-        self.id2word = {v: k for k, v in self.word2id.items()}
-        self.unk_token = unk_token
+    def __init__(self):
+        self.PAD = 0
+        self.BOS = 1
+        self.EOS = 2
+        self.UNK = 3
+        self.PAD_TOKEN = '<PAD>'
+        self.BOS_TOKEN = '<BOS>'
+        self.EOS_TOKEN = '<EOS>'
+        self.UNK_TOKEN = '<UNK>'
 
-    def build_vocab(self, sentences, min_count=1):
-        word_counter = {}
-        for sentence in sentences:
-            for word in sentence:
-                word_counter[word] = word_counter.get(word, 0) + 1
+        self.word2id = {
+            self.PAD_TOKEN: self.PAD,
+            self.BOS_TOKEN: self.BOS,
+            self.EOS_TOKEN: self.EOS,
+            self.UNK_TOKEN: self.UNK,
+        }
+        self.id2word = {
+            self.PAD: self.PAD_TOKEN,
+            self.BOS: self.BOS_TOKEN,
+            self.EOS: self.EOS_TOKEN,
+            self.UNK: self.UNK_TOKEN,
+        }
 
-        for word, count in sorted(word_counter.items(), key=lambda x: -x[1]):
-            if count < min_count:
-                break
-            _id = len(self.word2id)
-            self.word2id.setdefault(word, _id)
-            self.id2word[_id] = word
+    def build_vocab(self, sentences, min_count=1, max_words=10000):
+        tokenizer = Tokenizer(filters='', lower=True, char_level=False)
+        tokenizer.fit_on_texts(sentences)
+        for k, _ in Counter(tokenizer.word_counts).most_common(max_words):
+            id = len(self.word2id)
+            self.word2id[k] = id
+            self.id2word[id] = k
 
-        self.raw_vocab = {w: word_counter[w] for w in self.word2id.keys() if w in word_counter}
+        print("Total word2id: ", len(self.word2id))
+        print("Total id2word: ", len(self.id2word))
+
+        # self.raw_vocab = {w: word_counter[w] for w in self.word2id.keys() if w in word_counter}
 
     def sentence_to_ids(self, sentence):
-        return [self.word2id[word] if word in self.word2id else self.word2id[self.unk_token] for word in sentence]
+        return [self.word2id[word] if word in self.word2id else self.UNK for word in sentence]
 
-def load_data(file_path):
+def load_data(file_path, delim='\n'):
     '''
     # Arguments:
         file_path: str
@@ -37,9 +58,15 @@ def load_data(file_path):
             word.
     '''
     data = []
-    for line in open(file_path, encoding='utf-8'):
-        words = line.strip().split()  # スペースで単語を分割
-        data.append(words)
+    PUNCT = '!"#$%&()*+,-./:;<=>?\\[\\]\\\\^_`{|}~\\n\\t\'‘’“”’'
+    with open(file_path, 'r', encoding='utf8', errors='ignore') as f:
+        for line in f:
+            # If training word level, must add spaces around each punctuation,
+            # so that each punctuation can be treated as a word
+            line = line.rstrip(delim)
+            line = re.sub('(--|[{}])'.format(PUNCT), r' \1 ', line)
+            line = re.sub(' {2,}', ' ', line)
+            data.append(line)
     return data
 
 def sentence_to_ids(vocab, sentence, UNK=3):
@@ -51,7 +78,7 @@ def sentence_to_ids(vocab, sentence, UNK=3):
         ids: list of int
     '''
     ids = [vocab.word2id.get(word, UNK) for word in sentence]
-    # ids += [EOS]  # EOSを加える
+    # ids += [EOS]
     return ids
 
 def pad_seq(seq, max_length, PAD=0):
@@ -77,7 +104,7 @@ def print_ids(ids, vocab, verbose=True, exclude_mark=True, PAD=0, BOS=1, EOS=2):
             break
         if exclude_mark and id in (BOS, PAD):
             continue
-        sentence.append(sentence)
+        sentence.append(word)
     if verbose:
         print(sentence)
     return sentence
@@ -120,32 +147,17 @@ class GeneratorPretrainingGenerator(Sequence):
         >>> <S> I have a <UNK> </S> <PAD> ... <PAD>
     '''
     def __init__(self, path, B, T=40, min_count=1, shuffle=True):
-        self.PAD = 0
-        self.BOS = 1
-        self.EOS = 2
-        self.UNK = 3
-        self.PAD_TOKEN = '<PAD>'
-        self.UNK_TOKEN = '<UNK>'
-        self.BOS_TOKEN = '<S>'
-        self.EOS_TOKEN = '</S>'
         self.path = path
         self.B = B
         self.T = T
-        self.min_count = min_count
 
-        default_dict = {
-            self.PAD_TOKEN: self.PAD,
-            self.BOS_TOKEN: self.BOS,
-            self.EOS_TOKEN: self.EOS,
-            self.UNK_TOKEN: self.UNK,
-        }
-        self.vocab = Vocab(default_dict, self.UNK_TOKEN)
+        self.vocab = Vocab()
         sentences = load_data(path)
-        self.vocab.build_vocab(sentences, self.min_count)
+        self.vocab.build_vocab(sentences)
 
         self.word2id = self.vocab.word2id
         self.id2word = self.vocab.id2word
-        self.raw_vocab = self.vocab.raw_vocab
+        # self.raw_vocab = self.vocab.raw_vocab
         self.V = len(self.vocab.word2id)
         with open(path, 'r', encoding='utf-8') as f:
             self.n_data = sum(1 for line in f)
@@ -186,13 +198,13 @@ class GeneratorPretrainingGenerator(Sequence):
 
             ids_x, ids_y_true = [], []
 
-            ids_x.append(self.BOS)
+            ids_x.append(self.vocab.BOS)
             ids_x.extend(ids)
-            ids_x.append(self.EOS) # ex. [BOS, 8, 10, 6, 3, EOS]
+            ids_x.append(self.vocab.EOS) # ex. [BOS, 8, 10, 6, 3, EOS]
             x.append(ids_x)
 
             ids_y_true.extend(ids)
-            ids_y_true.append(self.EOS) # ex. [8, 10, 6, 3, EOS]
+            ids_y_true.append(self.vocab.EOS) # ex. [8, 10, 6, 3, EOS]
             y_true.append(ids_y_true)
 
             max_length = max(max_length, len(ids_x))
@@ -229,7 +241,7 @@ class GeneratorPretrainingGenerator(Sequence):
         self.idx = 0
         if self.shuffle:
             self.shuffled_indices = np.arange(self.n_data)
-            random.shuffle(self.shuffled_indices)
+            np.random.shuffle(self.shuffled_indices)
 
     def on_epoch_end(self):
         self.reset()
@@ -274,33 +286,18 @@ class DiscriminatorGenerator(Sequence):
         >>> I have a <UNK> </S> <PAD> ... <PAD>
     '''
     def __init__(self, path_pos, path_neg, B, T=40, min_count=1, shuffle=True):
-        self.PAD = 0
-        self.BOS = 1
-        self.EOS = 2
-        self.UNK = 3
-        self.PAD_TOKEN = '<PAD>'
-        self.UNK_TOKEN = '<UNK>'
-        self.BOS_TOKEN = '<S>'
-        self.EOS_TOKEN = '</S>'
         self.path_pos = path_pos
         self.path_neg = path_neg
         self.B = B
         self.T = T
-        self.min_count = min_count
 
-        default_dict = {
-            self.PAD_TOKEN: self.PAD,
-            self.BOS_TOKEN: self.BOS,
-            self.EOS_TOKEN: self.EOS,
-            self.UNK_TOKEN: self.UNK,
-        }
-        self.vocab = Vocab(default_dict, self.UNK_TOKEN)
+        self.vocab = Vocab()
         sentences = load_data(path_pos)
-        self.vocab.build_vocab(sentences, self.min_count)
+        self.vocab.build_vocab(sentences)
 
         self.word2id = self.vocab.word2id
         self.id2word = self.vocab.id2word
-        self.raw_vocab = self.vocab.raw_vocab
+        # self.raw_vocab = self.vocab.raw_vocab
         self.V = len(self.vocab.word2id)
         with open(path_pos, 'r', encoding='utf-8') as f:
             self.n_data_pos = sum(1 for line in f)
@@ -349,7 +346,7 @@ class DiscriminatorGenerator(Sequence):
 
             x = []
             x.extend(ids)
-            x.append(self.EOS) # ex. [8, 10, 6, 3, EOS]
+            x.append(self.vocab.EOS) # ex. [8, 10, 6, 3, EOS]
             X.append(x)
             Y.append(is_pos)
 
@@ -383,7 +380,7 @@ class DiscriminatorGenerator(Sequence):
         neg_indices = -1 * np.arange(start=1, stop=self.n_data_neg+1)
         self.indicies = np.concatenate([pos_indices, neg_indices])
         if self.shuffle:
-            random.shuffle(self.indicies)
+            np.random.shuffle(self.indicies)
 
     def on_epoch_end(self):
         self.reset()
