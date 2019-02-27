@@ -3,14 +3,39 @@ import keras
 import keras.backend as K
 from keras.models import Model
 from keras.layers import Input, Lambda, Activation, Dropout, Concatenate
-from keras.layers import Dense, Embedding, LSTM, Conv1D, GlobalMaxPooling1D
+from keras.layers import Dense, Embedding, LSTM, Conv1D, GlobalMaxPooling1D, Bidirectional
 from keras.layers import Activation
 from keras.layers.wrappers import TimeDistributed
 from keras.utils import to_categorical
 import tensorflow as tf
 import pickle
 
-def GeneratorPretraining(V, E, H):
+def new_lstm(cfg, layer_num, return_sequences=True, return_state=False):
+    use_cudnnlstm = K.backend() == 'tensorflow' and len(K.tensorflow_backend._get_available_gpus()) > 0
+    if use_cudnnlstm:
+        from keras.layers import CuDNNLSTM
+        if cfg['rnn_bidirectional']:
+            return Bidirectional(CuDNNLSTM(cfg['rnn_size'],
+                                           return_sequences=return_sequences, return_state=return_state),
+                                 name='rnn_{}'.format(layer_num))
+
+        return CuDNNLSTM(cfg['rnn_size'],
+                         return_sequences=return_sequences, return_state=return_state,
+                         name='rnn_{}'.format(layer_num))
+    else:
+        if cfg['rnn_bidirectional']:
+            return Bidirectional(LSTM(cfg['rnn_size'],
+                                      return_sequences=return_sequences, return_state=return_state,
+                                      recurrent_activation='sigmoid'),
+                                 name='rnn_{}'.format(layer_num))
+
+        return LSTM(cfg['rnn_size'],
+                    return_sequences=return_sequences, return_state=return_state,
+                    recurrent_activation='sigmoid',
+                    name='rnn_{}'.format(layer_num))
+
+
+def GeneratorPretraining(V, E, H, cfg):
     '''
     Model for Generator pretraining. This model's weights should be shared with
         Generator.
@@ -25,17 +50,24 @@ def GeneratorPretraining(V, E, H):
     '''
     # in comment, B means batch size, T means lengths of time steps.
     input = Input(shape=(None,), dtype='int32', name='Input') # (B, T)
-    out = Embedding(V, E, mask_zero=True, name='Embedding')(input) # (B, T, E)
-    out = LSTM(H, return_sequences=True, name='LSTM')(out)  # (B, T, H)
-    out = TimeDistributed(
-        Dense(V, activation='softmax', name='DenseSoftmax'),
-        name='TimeDenseSoftmax')(out)    # (B, T, V)
+    embedded = Embedding(V, E, mask_zero=True, name='Embedding')(input)  # (B, T, E)
+
+    cfg['rnn_size'] = H
+    prev_layer = embedded
+    for i in range(cfg['rnn_layers']):
+        if i < cfg['rnn_layers'] - 1:
+            return_seq = True  # (B, T, H)
+        else:
+            return_seq = False  # Last LSTM return only last output (B, H)
+        prev_layer = new_lstm(cfg, i + 1, return_sequences=return_seq)(prev_layer)
+
+    out = Dense(V, activation='softmax', name='DenseSoftmax')(prev_layer)
     generator_pretraining = Model(input, out)
     return generator_pretraining
 
 class Generator():
     'Create Generator, which generate a next word.'
-    def __init__(self, sess, B, V, E, H, lr=1e-3):
+    def __init__(self, sess, cfg, B, V, E, H, lr=1e-3):
         '''
         # Arguments:
             B: int, Batch size
@@ -46,6 +78,7 @@ class Generator():
             lr: float, learning rate, default is 0.001
         '''
         self.sess = sess
+        self.cfg = cfg
         self.B = B
         self.V = V
         self.E = E
@@ -56,38 +89,46 @@ class Generator():
 
     def _build_gragh(self):
         state_in = tf.placeholder(tf.float32, shape=(None, 1))
-        h_in = tf.placeholder(tf.float32, shape=(None, self.H))
-        c_in = tf.placeholder(tf.float32, shape=(None, self.H))
-        action = tf.placeholder(tf.float32, shape=(None, self.V)) # onehot (B, V)
-        reward  =tf.placeholder(tf.float32, shape=(None, ))
+        self.init_hs, self.init_cs = [], []
+        self.curr_hs, self.curr_cs = [], []
+        self.next_hs, self.next_cs = [], []
+        for i in range(self.cfg['rnn_layers']):
+            self.init_hs.append(tf.placeholder(tf.float32, shape=(None, self.H), name='rnn_%d_init_h' % (i + 1)))
+            self.init_cs.append(tf.placeholder(tf.float32, shape=(None, self.H), name='rnn_%d_init_c' % (i + 1)))
+        action = tf.placeholder(tf.float32, shape=(None, self.V))  # onehot (B, V)
+        reward = tf.placeholder(tf.float32, shape=(None, ))
 
         self.layers = []
 
         embedding = Embedding(self.V, self.E, mask_zero=True, name='Embedding')
-        out = embedding(state_in) # (B, 1, E)
+        embedded = embedding(state_in)  # (B, 1, E)
         self.layers.append(embedding)
 
-        lstm = LSTM(self.H, return_state=True, name='LSTM')
-        out, next_h, next_c = lstm(out, initial_state=[h_in, c_in])  # (B, H)
-        self.layers.append(lstm)
+        out = embedded
+        for i in range(self.cfg['rnn_layers']):
+            if i < self.cfg['rnn_layers'] - 1:
+                return_seq = True  # (B, T, H)
+            else:
+                return_seq = False  # Last LSTM return only last output (B, H)
+            cur_lstm = new_lstm(self.cfg, i + 1, return_sequences=return_seq, return_state=True)
+            out, next_h, next_c = cur_lstm(out, initial_state=[self.init_hs[i], self.init_cs[i]])
+            self.next_hs.append(next_h)
+            self.next_cs.append(next_c)
+            self.layers.append(cur_lstm)
 
         dense = Dense(self.V, activation='softmax', name='DenseSoftmax')
         prob = dense(out)    # (B, V)
         self.layers.append(dense)
 
-        log_prob = tf.log(tf.reduce_mean(prob * action, axis=-1)) # (B, )
+        log_prob = tf.log(tf.reduce_mean(prob * action, axis=-1))  # (B, )
         loss = - log_prob * reward
         optimizer = tf.train.AdamOptimizer(learning_rate=self.lr)
         minimize = optimizer.minimize(loss)
 
         self.state_in = state_in
-        self.h_in = h_in
-        self.c_in = c_in
         self.action = action
         self.reward = reward
         self.prob = prob
-        self.next_h = next_h
-        self.next_c = next_c
         self.minimize = minimize
         self.loss = loss
 
@@ -95,20 +136,22 @@ class Generator():
         self.sess.run(self.init_op)
 
     def reset_rnn_state(self):
-        self.h = np.zeros([self.B, self.H])
-        self.c = np.zeros([self.B, self.H])
+        for i in range(self.cfg['rnn_layers']):
+            self.curr_hs[i] = np.zeros([self.B, self.H])
+            self.curr_cs[i] = np.zeros([self.B, self.H])
 
-    def set_rnn_state(self, h, c):
+    def set_rnn_state(self, hs, cs):
         '''
         # Arguments:
             h: np.array, shape = (B,H)
             c: np.array, shape = (B,H)
         '''
-        self.h = h
-        self.c = c
+        for i in range(self.cfg['rnn_layers']):
+            self.curr_hs[i] = hs[i]
+            self.curr_cs[i] = cs[i]
 
     def get_rnn_state(self):
-        return self.h, self.c
+        return self.curr_hs, self.curr_cs
 
     def predict(self, state, stateful=True):
         '''
@@ -124,22 +167,26 @@ class Generator():
             prob: np.array, shape=(B, V)
         '''
         # state = state.reshape(-1, 1)
-        feed_dict = {
-            self.state_in : state,
-            self.h_in : self.h,
-            self.c_in : self.c}
-        prob, next_h, next_c = self.sess.run(
-            [self.prob, self.next_h, self.next_c],
-            feed_dict)
+        feed_dict = {self.state_in: state}
+        for i in range(self.cfg['rnn_layers']):
+            # Use current h and c to feed into initial_state
+            feed_dict[self.init_hs[i]] = self.curr_hs[i]
+            feed_dict[self.init_cs[i]] = self.curr_cs[i]
+
+        result_dict = self.sess.run({'prob': self.prob,
+                                     'next_hs': self.next_hs,
+                                     'next_cs': self.next_cs})
+        prob = result_dict['prob']
+        next_hs = result_dict['next_hs']
+        next_cs = result_dict['next_cs']
 
         if stateful:
-            self.h = next_h
-            self.c = next_c
+            self.set_rnn_state(next_hs, next_cs)
             return prob
         else:
-            return prob, next_h, next_c
+            return prob, next_hs, next_cs
 
-    def update(self, state, action, reward, h=None, c=None, stateful=True):
+    def update(self, state, action, reward, hs=None, cs=None, stateful=True):
         '''
         Update weights by Policy Gradient.
         # Arguments:
@@ -165,28 +212,36 @@ class Generator():
             next_h: (if stateful is True)
             next_c: (if stateful is True)
         '''
-        if h is None:
-            h = self.h
-        if c is None:
-            c = self.c
+        if hs is None:
+            hs = self.curr_hs
+        if cs is None:
+            cs = self.curr_cs
         state = state[:, -1].reshape(-1, 1)
         reward = reward.reshape(-1)
         feed_dict = {
-            self.state_in : state,
-            self.h_in : h,
-            self.c_in : c,
-            self.action : to_categorical(action, self.V),
-            self.reward : reward}
-        _, loss, next_h, next_c = self.sess.run(
-            [self.minimize, self.loss, self.next_h, self.next_c],
+            self.state_in: state,
+            self.action: to_categorical(action, self.V),
+            self.reward: reward
+        }
+        for i in range(self.cfg['rnn_layers']):
+            # Use current h and c to feed into initial_state
+            feed_dict[self.init_hs[i]] = hs[i]
+            feed_dict[self.init_cs[i]] = cs[i]
+
+        result_dict = self.sess.run(
+            {'minimize': self.minimize, 'loss': self.loss,
+             'next_hs': self.next_hs, 'next_cs': self.next_cs},
             feed_dict)
 
+        loss = result_dict['loss']
+        next_hs = result_dict['next_hs']
+        next_cs = result_dict['next_cs']
+
         if stateful:
-            self.h = next_h
-            self.c = next_c
+            self.set_rnn_state(next_hs, next_cs)
             return loss
         else:
-            return loss, next_h, next_c
+            return loss, next_hs, next_cs
 
     def sampling_word(self, prob):
         '''
@@ -195,6 +250,7 @@ class Generator():
         # Returns:
             action: numpy array, dtype=int, shape = (B, )
         '''
+        # TODO We should use tf.distributions.Multinomial to avoid for loop and also add temperature
         action = np.zeros((self.B,), dtype=np.int32)
         for i in range(self.B):
             p = prob[i]
@@ -259,7 +315,7 @@ class Generator():
         for layer, w in zip(self.layers, weights):
             layer.set_weights(w)
 
-def Discriminator(V, E, H=64, dropout=0.1):
+def Discriminator(cfg, V, E, H=64, dropout=0.1):
     '''
     Disciriminator model.
     # Arguments:
@@ -274,7 +330,15 @@ def Discriminator(V, E, H=64, dropout=0.1):
     '''
     input = Input(shape=(None,), dtype='int32', name='Input')   # (B, T)
     out = Embedding(V, E, mask_zero=True, name='Embedding')(input)  # (B, T, E)
-    out = LSTM(H)(out)
+
+    cfg['rnn_size'] = H
+    for i in range(cfg['rnn_layers']):
+        if i < cfg['rnn_layers'] - 1:
+            return_seq = True  # (B, T, H)
+        else:
+            return_seq = False  # Last LSTM returns only last output (B, H)
+        out = new_lstm(cfg, i + 1, return_sequences=return_seq)(out)
+
     out = Highway(out, num_layers=1)
     out = Dropout(dropout, name='Dropout')(out)
     out = Dense(1, activation='sigmoid', name='FC')(out)
