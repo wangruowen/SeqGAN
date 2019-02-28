@@ -315,7 +315,7 @@ class Generator():
         for layer, w in zip(self.layers, weights):
             layer.set_weights(w)
 
-def Discriminator(cfg, V, E, H=64, dropout=0.1):
+def Discriminator(cfg, V, E, H=64, dropout=0.1, use_highway=True):
     '''
     Disciriminator model.
     # Arguments:
@@ -339,7 +339,8 @@ def Discriminator(cfg, V, E, H=64, dropout=0.1):
             return_seq = False  # Last LSTM returns only last output (B, H)
         out = new_lstm(cfg, i + 1, return_sequences=return_seq)(out)
 
-    out = Highway(out, num_layers=1)
+    if use_highway:
+        out = Highway(out, num_layers=1)
     out = Dropout(dropout, name='Dropout')(out)
     out = Dense(1, activation='sigmoid', name='FC')(out)
 

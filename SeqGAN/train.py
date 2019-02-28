@@ -1,5 +1,5 @@
 from .models import GeneratorPretraining, Discriminator, Generator
-from .utils import GeneratorPretrainingGenerator, DiscriminatorGenerator
+from .utils import GeneratorPretrainingFitGenerator, DiscriminatorGenerator
 from .rl import Agent, Environment
 from keras.optimizers import Adam
 import os
@@ -26,7 +26,7 @@ class Trainer(object):
         self.top = os.getcwd()
         self.path_pos = training_set_path
         self.path_neg = os.path.join(self.top, 'data', 'save', 'generated_sentences.txt')
-        self.g_data = GeneratorPretrainingGenerator(
+        self.g_data = GeneratorPretrainingFitGenerator(
             self.path_pos,
             B=B,
             T=T,
