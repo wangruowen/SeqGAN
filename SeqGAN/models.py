@@ -10,32 +10,32 @@ from keras.utils import to_categorical
 import tensorflow as tf
 import pickle
 
-def new_lstm(cfg, layer_num, return_sequences=True, return_state=False):
+def new_lstm(rnn_size, layer_num, use_bidirectional=False, return_sequences=True, return_state=False):
     use_cudnnlstm = K.backend() == 'tensorflow' and len(K.tensorflow_backend._get_available_gpus()) > 0
     if use_cudnnlstm:
         from keras.layers import CuDNNLSTM
-        if cfg['rnn_bidirectional']:
-            return Bidirectional(CuDNNLSTM(cfg['rnn_size'],
+        if use_bidirectional:
+            return Bidirectional(CuDNNLSTM(rnn_size,
                                            return_sequences=return_sequences, return_state=return_state),
                                  name='rnn_{}'.format(layer_num))
 
-        return CuDNNLSTM(cfg['rnn_size'],
+        return CuDNNLSTM(rnn_size,
                          return_sequences=return_sequences, return_state=return_state,
                          name='rnn_{}'.format(layer_num))
     else:
-        if cfg['rnn_bidirectional']:
-            return Bidirectional(LSTM(cfg['rnn_size'],
+        if use_bidirectional:
+            return Bidirectional(LSTM(rnn_size,
                                       return_sequences=return_sequences, return_state=return_state,
                                       recurrent_activation='sigmoid'),
                                  name='rnn_{}'.format(layer_num))
 
-        return LSTM(cfg['rnn_size'],
+        return LSTM(rnn_size,
                     return_sequences=return_sequences, return_state=return_state,
                     recurrent_activation='sigmoid',
                     name='rnn_{}'.format(layer_num))
 
 
-def GeneratorPretraining(V, E, H, cfg):
+def GeneratorPretraining(cfg, vocab):
     '''
     Model for Generator pretraining. This model's weights should be shared with
         Generator.
@@ -49,17 +49,16 @@ def GeneratorPretraining(V, E, H, cfg):
             output: word probability, shape = (B, T, V)
     '''
     # in comment, B means batch size, T means lengths of time steps.
-    input = Input(shape=(None,), dtype='int32', name='Input') # (B, T)
-    embedded = Embedding(V, E, mask_zero=True, name='Embedding')(input)  # (B, T, E)
+    input = Input(shape=(cfg['batch_size'],), dtype='int32', name='Input') # (B, T)
+    embedded = Embedding(vocab.num_classes, cfg['gen_embed'], mask_zero=True, name='Embedding')(input)  # (B, T, E)
 
-    cfg['rnn_size'] = H
     prev_layer = embedded
     for i in range(cfg['rnn_layers']):
         if i < cfg['rnn_layers'] - 1:
             return_seq = True  # (B, T, H)
         else:
             return_seq = False  # Last LSTM return only last output (B, H)
-        prev_layer = new_lstm(cfg, i + 1, return_sequences=return_seq)(prev_layer)
+        prev_layer = new_lstm(cfg['gen_hidden'], i + 1, return_sequences=return_seq)(prev_layer)
 
     out = Dense(V, activation='softmax', name='DenseSoftmax')(prev_layer)
     generator_pretraining = Model(input, out)
@@ -67,7 +66,7 @@ def GeneratorPretraining(V, E, H, cfg):
 
 class Generator():
     'Create Generator, which generate a next word.'
-    def __init__(self, sess, cfg, B, V, E, H, lr=1e-3):
+    def __init__(self, sess, cfg, vocab):
         '''
         # Arguments:
             B: int, Batch size
@@ -79,11 +78,11 @@ class Generator():
         '''
         self.sess = sess
         self.cfg = cfg
-        self.B = B
-        self.V = V
-        self.E = E
-        self.H = H
-        self.lr = lr
+        self.B = cfg['batch_size']
+        self.V = vocab.num_classes
+        self.E = cfg['gen_embed']
+        self.H = cfg['gen_hidden']
+        self.lr = cfg['gen_lr']
         self._build_gragh()
         self.reset_rnn_state()
 
@@ -110,7 +109,7 @@ class Generator():
                 return_seq = True  # (B, T, H)
             else:
                 return_seq = False  # Last LSTM return only last output (B, H)
-            cur_lstm = new_lstm(self.cfg, i + 1, return_sequences=return_seq, return_state=True)
+            cur_lstm = new_lstm(self.cfg['gen_hidden'], i + 1, return_sequences=return_seq, return_state=True)
             out, next_h, next_c = cur_lstm(out, initial_state=[self.init_hs[i], self.init_cs[i]])
             self.next_hs.append(next_h)
             self.next_cs.append(next_c)
@@ -301,6 +300,7 @@ class Generator():
         with open(output_file, 'w', encoding='utf-8') as f:
             f.write(output_str)
 
+    # TODO replace pickle and use keras's save/load api
     def save(self, path):
         weights = []
         for layer in self.layers:
@@ -315,7 +315,7 @@ class Generator():
         for layer, w in zip(self.layers, weights):
             layer.set_weights(w)
 
-def Discriminator(cfg, V, E, H=64, dropout=0.1, use_highway=True):
+def Discriminator(cfg, vocab, use_highway=True):
     '''
     Disciriminator model.
     # Arguments:
@@ -329,19 +329,18 @@ def Discriminator(cfg, V, E, H=64, dropout=0.1, use_highway=True):
             output: probability of true data or not, shape = (B, 1)
     '''
     input = Input(shape=(None,), dtype='int32', name='Input')   # (B, T)
-    out = Embedding(V, E, mask_zero=True, name='Embedding')(input)  # (B, T, E)
+    out = Embedding(vocab.num_classes, cfg['dis_embed'], mask_zero=True, name='Embedding')(input)  # (B, T, E)
 
-    cfg['rnn_size'] = H
     for i in range(cfg['rnn_layers']):
         if i < cfg['rnn_layers'] - 1:
             return_seq = True  # (B, T, H)
         else:
             return_seq = False  # Last LSTM returns only last output (B, H)
-        out = new_lstm(cfg, i + 1, return_sequences=return_seq)(out)
+        out = new_lstm(cfg['dis_hidden'], i + 1, return_sequences=return_seq)(out)
 
     if use_highway:
         out = Highway(out, num_layers=1)
-    out = Dropout(dropout, name='Dropout')(out)
+    out = Dropout(cfg['dis_dropout'], name='Dropout')(out)
     out = Dense(1, activation='sigmoid', name='FC')(out)
 
     discriminator = Model(input, out)

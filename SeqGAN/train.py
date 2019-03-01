@@ -13,14 +13,13 @@ class Trainer(object):
     '''
     Manage training
     '''
-    def __init__(self, cfg, training_set_path, B, T, g_E, g_H, d_E, d_H, d_dropout, g_lr=1e-3, d_lr=1e-3,
-        n_sample=16, generate_samples=10000, init_eps=0.1):
-        self.B, self.T = B, T
-        self.g_E, self.g_H = g_E, g_H
-        self.d_E, self.d_H = d_E, d_H
-        self.d_dropout = d_dropout
-        self.generate_samples = generate_samples
-        self.g_lr, self.d_lr = g_lr, d_lr
+    def __init__(self, cfg, training_set_path, init_eps=0.1):
+        self.B, self.T = cfg['batch_size'], cfg['max_length']
+        self.g_E, self.g_H = cfg['gen_embed'], cfg['gen_hidden']
+        self.d_E, self.d_H = cfg['dis_embed'], cfg['dis_hidden']
+        self.d_dropout = cfg['dis_dropout']
+        self.generate_samples = cfg['gen_samples']
+        self.g_lr, self.d_lr = cfg['gen_lr'], cfg['dis_lr']
         self.eps = init_eps
         self.init_eps = init_eps
         self.top = os.getcwd()
@@ -32,12 +31,12 @@ class Trainer(object):
         self.pretrain_data = generate_pretrain_batch(cfg, self.texts, self.vocab)
 
         self.V = self.vocab.num_classes
-        self.agent = Agent(sess, B, self.V, g_E, g_H, g_lr)
-        self.g_beta = Agent(sess, B, self.V, g_E, g_H, g_lr)
-        self.discriminator = Discriminator(self.V, d_E, d_H, d_dropout)
-        self.env = Environment(self.discriminator, self.pretrain_data, self.g_beta, n_sample=n_sample)
+        self.agent = Agent(sess, cfg, self.vocab)
+        self.g_beta = Agent(sess, cfg, self.vocab)
+        self.discriminator = Discriminator(cfg, self.vocab, use_highway=False)
+        self.env = Environment(self.discriminator, self.pretrain_data, self.g_beta, n_sample=cfg['mcts_sample'])
 
-        self.generator_pre = GeneratorPretraining(self.V, g_E, g_H)
+        self.generator_pre = GeneratorPretraining(cfg, self.vocab)
 
     def pre_train(self, g_epochs=3, d_epochs=1, g_pre_path=None ,d_pre_path=None,
         g_lr=1e-3, d_lr=1e-3):

@@ -8,7 +8,7 @@ class Agent(object):
     On each step, Agent act on state.
     Then Environment return next state, reward, and so on.
     '''
-    def __init__(self, sess, B, V, E, H, lr=1e-3):
+    def __init__(self, sess, cfg, vocab):
         '''
         # Arguments:
             sess: tf.Session
@@ -20,14 +20,14 @@ class Agent(object):
             lr: float, learning rate, default is 0.001
         '''
         self.sess = sess
-        self.num_actions = V
-        self.B = B
-        self.V = V
-        self.E = E
-        self.H = H
-        self.lr = lr
+        self.num_actions = vocab.num_classes
+        self.B = cfg['batch_size']
+        self.V = vocab.num_classes
+        self.E = cfg['gen_embed']
+        self.H = cfg['gen_hidden']
+        self.lr = cfg['gen_lr']
         self.eps = 0.1
-        self.generator = Generator(sess, B, V, E, H, lr)
+        self.generator = Generator(sess, cfg, vocab)
 
     def act(self, state, epsilon=0, deterministic=False):
         '''
