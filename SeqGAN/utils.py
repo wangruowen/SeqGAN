@@ -5,11 +5,10 @@ import re
 import csv
 from collections import Counter
 
-from keras.preprocessing import sequence
 from keras.utils import Sequence
 from keras.utils.np_utils import to_categorical
 from keras.preprocessing.text import Tokenizer, text_to_word_sequence
-# from keras.preprocessing.sequence import pad_sequences
+from keras.preprocessing.sequence import pad_sequences
 
 
 class Vocab:
@@ -37,20 +36,19 @@ class Vocab:
         }
         self.tokenizer = Tokenizer(filters='', lower=True, char_level=False)
 
-    def build_vocab(self, sentences, min_count=1, max_words=10000):
+    def build_vocab(self, sentences, max_words=10000):
         self.tokenizer.fit_on_texts(sentences)
         for k, _ in Counter(self.tokenizer.word_counts).most_common(max_words):
-            id = len(self.word2id)
-            self.word2id[k] = id
-            self.id2word[id] = k
-
+            _id = len(self.word2id)
+            self.word2id[k] = _id
+            self.id2word[_id] = k
+        self.tokenizer.word_index = self.word2id
+        self.tokenizer.index_word = self.id2word
+        self.num_classes = len(self.word2id)
         print("Total word2id: ", len(self.word2id))
         print("Total id2word: ", len(self.id2word))
 
         # self.raw_vocab = {w: word_counter[w] for w in self.word2id.keys() if w in word_counter}
-
-    def sentence_to_ids(self, sentence):
-        return [self.word2id[word] if word in self.word2id else self.UNK for word in sentence]
 
 def load_texts(file_path, delim='\n'):
     '''
@@ -72,26 +70,26 @@ def load_texts(file_path, delim='\n'):
             data.append(line)
     return data
 
-def sentence_to_ids(vocab, sentence, UNK=3):
-    '''
-    # Arguments:
-        vocab: SeqGAN.utils.Vocab
-        sentence: list of str
-    # Returns:
-        ids: list of int
-    '''
-    ids = [vocab.word2id.get(word, UNK) for word in sentence]
-    # ids += [EOS]
-    return ids
-
-def pad_seq(seq, max_length, PAD=0):
-    """
-    :param seq: list of int,
-    :param max_length: int,
-    :return seq: list of int,
-    """
-    seq += [PAD for i in range(max_length - len(seq))]
-    return seq
+# def sentence_to_ids(vocab, sentence, UNK=3):
+#     '''
+#     # Arguments:
+#         vocab: SeqGAN.utils.Vocab
+#         sentence: list of str
+#     # Returns:
+#         ids: list of int
+#     '''
+#     ids = [vocab.word2id.get(word, UNK) for word in sentence]
+#     # ids += [EOS]
+#     return ids
+#
+# def pad_seq(seq, max_length, PAD=0):
+#     """
+#     :param seq: list of int,
+#     :param max_length: int,
+#     :return seq: list of int,
+#     """
+#     seq += [PAD for i in range(max_length - len(seq))]
+#     return seq
 
 def print_ids(ids, vocab, verbose=True, exclude_mark=True, PAD=0, BOS=1, EOS=2):
     '''
@@ -155,21 +153,20 @@ class GeneratorPretrainingFitGenerator(Sequence):
         self.T = T
 
         self.vocab = Vocab()
-        sentences = load_data(path)
+        sentences = load_texts(path)
+        self.n_data = len(sentences)
         self.vocab.build_vocab(sentences)
 
         self.word2id = self.vocab.word2id
         self.id2word = self.vocab.id2word
         # self.raw_vocab = self.vocab.raw_vocab
         self.V = len(self.vocab.word2id)
-        with open(path, 'r', encoding='utf-8') as f:
-            self.n_data = sum(1 for line in f)
+
         self.shuffle = shuffle
         self.idx = 0
         self.len = self.__len__()
         self.training_indices, self.validation_indices = prepare_training_indices(sentences, cfg['train_val_split_percent'])
         self.reset()
-
 
     def __len__(self):
         return self.n_data // self.B
@@ -296,7 +293,7 @@ class DiscriminatorGenerator(Sequence):
         self.T = T
 
         self.vocab = Vocab()
-        sentences = load_data(path_pos)
+        sentences = load_texts(path_pos)
         self.vocab.build_vocab(sentences)
 
         self.word2id = self.vocab.word2id
@@ -436,60 +433,52 @@ def generate_batch_from_texts(cfg, file_path):
 
     vocab = Vocab()
     texts = load_texts(file_path)
-    vocab.build_vocab(texts)
+    print(texts[:10])
+    vocab.build_vocab(texts, cfg['max_words'])
 
-    texts = [text_to_word_sequence(line) for line in texts]
-    train_indices, validation_indices = prepare_training_indices(texts, 0.9)
+    sequences = [[vocab.BOS] + each_seq + [vocab.EOS] for each_seq in vocab.tokenizer.texts_to_sequences(texts)]
+    train_indices, validation_indices = prepare_training_indices(sequences, 0.9)
 
     while True:
         np.random.shuffle(train_indices)
 
         X_batch = []
         Y_batch = []
-        context_batch = []
         count_batch = 0
 
         for row in range(train_indices.shape[0]):
             line_index = train_indices[row, 0]
             end_index = train_indices[row, 1]
 
-            text = vocab.BOS + texts[line_index] + vocab.EOS  # new_length = text_length + 2
+            cur_seq = sequences[line_index]
 
             if end_index > max_length:
-                x = text[end_index - max_length + 1: end_index + 1]
+                x = cur_seq[end_index - max_length: end_index]
             else:
-                x = text[0: end_index + 1]
-            y = text[end_index + 1]
+                x = cur_seq[0: end_index]
+            y = cur_seq[end_index]
 
-            if y in vocab:
-                x = process_sequence([x], vocab.tokenizer, max_length)
-                y = textgenrnn_encode_cat([y], textgenrnn.vocab)
+            if y in vocab.id2word:
+                x = pad_sequences([x], maxlen=max_length, padding='post', truncating='post')
+                # print([vocab.id2word[i] for i in x[0]])
+                # print(x[0])
+
+                y = to_categorical(y, vocab.num_classes)
 
                 X_batch.append(x)
                 Y_batch.append(y)
 
                 count_batch += 1
-
                 if count_batch % batch_size == 0:
                     X_batch = np.squeeze(np.array(X_batch))
                     Y_batch = np.squeeze(np.array(Y_batch))
-                    context_batch = np.squeeze(np.array(context_batch))
 
-                    # print(X_batch.shape)
-
-                    if context_labels is not None:
-                        yield ([X_batch, context_batch], [Y_batch, Y_batch])
-                    else:
-                        yield (X_batch, Y_batch)
+                    # print("X_batch.shape: ", X_batch.shape)
+                    # print("Y_batch.shape: ", Y_batch.shape)
+                    yield (X_batch, Y_batch)
                     X_batch = []
                     Y_batch = []
-                    context_batch = []
                     count_batch = 0
 
 
-def process_sequence(X, new_tokenizer, max_length):
-    X = new_tokenizer.texts_to_sequences(X)
-    X = sequence.pad_sequences(
-        X, maxlen=max_length)
 
-    return X
