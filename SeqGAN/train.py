@@ -1,5 +1,5 @@
 from .models import GeneratorPretraining, Discriminator, Generator
-from .utils import GeneratorPretrainingFitGenerator, DiscriminatorGenerator
+from .utils import *
 from .rl import Agent, Environment
 from keras.optimizers import Adam
 import os
@@ -13,7 +13,7 @@ class Trainer(object):
     '''
     Manage training
     '''
-    def __init__(self, training_set_path, B, T, g_E, g_H, d_E, d_H, d_dropout, g_lr=1e-3, d_lr=1e-3,
+    def __init__(self, cfg, training_set_path, B, T, g_E, g_H, d_E, d_H, d_dropout, g_lr=1e-3, d_lr=1e-3,
         n_sample=16, generate_samples=10000, init_eps=0.1):
         self.B, self.T = B, T
         self.g_E, self.g_H = g_E, g_H
@@ -26,22 +26,16 @@ class Trainer(object):
         self.top = os.getcwd()
         self.path_pos = training_set_path
         self.path_neg = os.path.join(self.top, 'data', 'save', 'generated_sentences.txt')
-        self.g_data = GeneratorPretrainingFitGenerator(
-            self.path_pos,
-            B=B,
-            T=T,
-            min_count=1)
-        if os.path.exists(self.path_neg):
-            self.d_data = DiscriminatorGenerator(
-                path_pos=self.path_pos,
-                path_neg=self.path_neg,
-                B=self.B,
-                shuffle=True)
-        self.V = self.g_data.V
+
+        self.texts = load_texts(self.path_pos)
+        self.vocab = create_vocabulary(cfg, self.texts)
+        self.pretrain_data = generate_pretrain_batch(cfg, self.texts, self.vocab)
+
+        self.V = self.vocab.num_classes
         self.agent = Agent(sess, B, self.V, g_E, g_H, g_lr)
         self.g_beta = Agent(sess, B, self.V, g_E, g_H, g_lr)
         self.discriminator = Discriminator(self.V, d_E, d_H, d_dropout)
-        self.env = Environment(self.discriminator, self.g_data, self.g_beta, n_sample=n_sample)
+        self.env = Environment(self.discriminator, self.pretrain_data, self.g_beta, n_sample=n_sample)
 
         self.generator_pre = GeneratorPretraining(self.V, g_E, g_H)
 
@@ -62,7 +56,7 @@ class Trainer(object):
         self.generator_pre.summary()
 
         self.generator_pre.fit_generator(
-            self.g_data,
+            self.pretrain_data,
             steps_per_epoch=None,
             epochs=g_epochs)
         self.generator_pre.save_weights(self.g_pre_path)
@@ -75,14 +69,11 @@ class Trainer(object):
             self.d_pre_path = d_pre_path
 
         print('Start Generating sentences')
-        self.agent.generator.generate_samples(self.T, self.g_data,
+        self.agent.generator.generate_samples(self.T,
             self.generate_samples, self.path_neg)
 
-        self.d_data = DiscriminatorGenerator(
-            path_pos=self.path_pos,
-            path_neg=self.path_neg,
-            B=self.B,
-            shuffle=True)
+        self.neg_texts = load_texts(self.path_neg)
+        self.train_data = generate_train_batch(cfg, self.texts, self.neg_texts, self.vocab)
 
         d_adam = Adam(lr)
         self.discriminator.compile(d_adam, 'binary_crossentropy')
@@ -90,7 +81,7 @@ class Trainer(object):
         print('Discriminator pre-training')
 
         self.discriminator.fit_generator(
-            self.d_data,
+            self.train_data,
             steps_per_epoch=None,
             epochs=d_epochs)
         self.discriminator.save(self.d_pre_path)

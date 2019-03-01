@@ -82,7 +82,7 @@ class Environment(object):
     On each step, Agent act on state.
     Then Environment return next state, reward, and so on.
     '''
-    def __init__(self, discriminator, data_generator, g_beta, n_sample=16):
+    def __init__(self, cfg, discriminator, vocab, g_beta, n_sample=16):
         '''
         Environment class for Reinforced Learning
         # Arguments:
@@ -94,11 +94,11 @@ class Environment(object):
         # Optional Arguments
             n_sample: int, default is 16, the number of Monte Calro search sample
         '''
-        self.data_generator = data_generator
-        self.B = data_generator.B
-        self.T = data_generator.T
+        self.vocab = vocab
+        self.B = cfg['batch_size']
+        self.T = cfg['max_length']
         self.n_sample = n_sample
-        self.BOS = data_generator.vocab.BOS
+        self.BOS = vocab.BOS
         self.discriminator = discriminator
         self.g_beta = g_beta
         self.reset()
@@ -141,7 +141,7 @@ class Environment(object):
     def render(self, head=1):
         for i in range(head):
             ids = self.get_state()[i]
-            words = [self.data_generator.id2word[id] for id in ids.tolist()]
+            words = [self.vocab.id2word[id] for id in ids.tolist()]
             print(ids.tolist())
             print(' '.join(words))
         print('-' * 80)

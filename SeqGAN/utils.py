@@ -426,18 +426,18 @@ def prepare_training_indices(texts, training_percent):
     indices_mask = np.random.rand(indices_list.shape[0]) < training_percent
     return indices_list[indices_mask, :], indices_list[~indices_mask, :]
 
+def create_vocabulary(cfg, texts):
+    vocab = Vocab()
+    # print(texts[:10])
+    vocab.build_vocab(texts, cfg['max_words'])
+    return vocab
 
-def generate_batch_from_texts(cfg, file_path):
+def generate_pretrain_batch(cfg, texts, vocab, train_valid_percent=1):
     max_length = cfg['max_length']
     batch_size = cfg['batch_size']
 
-    vocab = Vocab()
-    texts = load_texts(file_path)
-    print(texts[:10])
-    vocab.build_vocab(texts, cfg['max_words'])
-
     sequences = [[vocab.BOS] + each_seq + [vocab.EOS] for each_seq in vocab.tokenizer.texts_to_sequences(texts)]
-    train_indices, validation_indices = prepare_training_indices(sequences, 0.9)
+    train_indices, validation_indices = prepare_training_indices(sequences, train_valid_percent)
 
     while True:
         np.random.shuffle(train_indices)
@@ -481,4 +481,51 @@ def generate_batch_from_texts(cfg, file_path):
                     count_batch = 0
 
 
+def generate_train_batch(cfg, pos_texts, neg_texts, vocab, train_valid_percent=1):
+    max_length = cfg['max_length']
+    batch_size = cfg['batch_size']
 
+    pos_seq = [[vocab.BOS] + each_seq + [vocab.EOS] for each_seq in vocab.tokenizer.texts_to_sequences(pos_texts)]
+    neg_seq = [[vocab.BOS] + each_seq + [vocab.EOS] for each_seq in vocab.tokenizer.texts_to_sequences(neg_texts)]
+    all_seq = pos_seq + neg_seq
+    all_Y = [1] * len(pos_seq) + [0] * len(neg_seq)
+    train_indices, validation_indices = prepare_training_indices(all_seq, train_valid_percent)
+
+    while True:
+        np.random.shuffle(train_indices)
+
+        X_batch = []
+        Y_batch = []
+        count_batch = 0
+
+        for row in range(train_indices.shape[0]):
+            line_index = train_indices[row, 0]
+            end_index = train_indices[row, 1]
+
+            cur_seq = all_seq[line_index]
+
+            if end_index > max_length:
+                x = cur_seq[end_index - max_length: end_index]
+            else:
+                x = cur_seq[0: end_index]
+            y = all_Y[line_index]
+
+            if y in vocab.id2word:
+                x = pad_sequences([x], maxlen=max_length, padding='post', truncating='post')
+                # print([vocab.id2word[i] for i in x[0]])
+                # print(x[0])
+
+                X_batch.append(x)
+                Y_batch.append(y)
+
+                count_batch += 1
+                if count_batch % batch_size == 0:
+                    X_batch = np.squeeze(np.array(X_batch))
+                    Y_batch = np.squeeze(np.array(Y_batch))
+
+                    # print("X_batch.shape: ", X_batch.shape)
+                    # print("Y_batch.shape: ", Y_batch.shape)
+                    yield (X_batch, Y_batch)
+                    X_batch = []
+                    Y_batch = []
+                    count_batch = 0
