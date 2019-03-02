@@ -54,8 +54,8 @@ class Agent(object):
         action = None
         is_PAD = word == PAD
         is_EOS = word == EOS
-        is_end = is_PAD.astype(np.int) + is_EOS.astype(np.int)
-        is_end = 1 - is_end
+        is_end = is_PAD.astype(np.int) + is_EOS.astype(np.int)  # Either is_PAD or is_EOS, indicates the end
+        is_end = 1 - is_end  # if it is end, is_end == 0
         is_end = is_end.reshape([self.B, 1])
         if np.random.rand() <= epsilon:
             action = np.random.randint(low=0, high=self.num_actions, size=(self.B, 1))
@@ -65,7 +65,7 @@ class Agent(object):
         else:
             probs = self.generator.predict(word) # (B, T)
             action = np.argmax(probs, axis=-1).reshape([self.B, 1])
-        return action * is_end
+        return action * is_end  # if it is end, return 0.0
 
     def reset(self):
         self.generator.reset_rnn_state()

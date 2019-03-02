@@ -14,6 +14,7 @@ class Trainer(object):
     Manage training
     '''
     def __init__(self, cfg, training_set_path, init_eps=0.1):
+        self.cfg = cfg
         self.B, self.T = cfg['batch_size'], cfg['max_length']
         self.g_E, self.g_H = cfg['gen_embed'], cfg['gen_hidden']
         self.d_E, self.d_H = cfg['dis_embed'], cfg['dis_hidden']
@@ -27,21 +28,22 @@ class Trainer(object):
         self.path_neg = os.path.join(self.top, 'data', 'save', 'generated_sentences.txt')
 
         self.texts = load_texts(self.path_pos)
+        self.texts_lines = len(self.texts)
         self.vocab = create_vocabulary(cfg, self.texts)
-        self.pretrain_data = generate_pretrain_batch(cfg, self.texts, self.vocab)
+        self.pretrain_data_generator = generate_pretrain_batch(cfg, self.texts, self.vocab)
 
         self.V = self.vocab.num_classes
         self.agent = Agent(sess, cfg, self.vocab)
         self.g_beta = Agent(sess, cfg, self.vocab)
         self.discriminator = Discriminator(cfg, self.vocab, use_highway=False)
-        self.env = Environment(self.discriminator, self.pretrain_data, self.g_beta, n_sample=cfg['mcts_sample'])
+        self.env = Environment(self.discriminator, self.pretrain_data_generator, self.g_beta, n_sample=cfg['mcts_sample'])
 
         self.generator_pre = GeneratorPretraining(cfg, self.vocab)
 
-    def pre_train(self, g_epochs=3, d_epochs=1, g_pre_path=None ,d_pre_path=None,
+    def pre_train(self, g_epochs=3, d_epochs=1, g_weight_file=None ,d_weight_file=None,
         g_lr=1e-3, d_lr=1e-3):
-        self.pre_train_generator(g_epochs=g_epochs, g_pre_path=g_pre_path, lr=g_lr)
-        self.pre_train_discriminator(d_epochs=d_epochs, d_pre_path=d_pre_path, lr=d_lr)
+        self.pre_train_generator(g_epochs=g_epochs, g_pre_path=g_weight_file, lr=g_lr)
+        self.pre_train_discriminator(d_epochs=d_epochs, d_pre_path=d_weight_file, lr=d_lr)
 
     def pre_train_generator(self, g_epochs=3, g_pre_path=None, lr=1e-3):
         if g_pre_path is None:
@@ -55,9 +57,10 @@ class Trainer(object):
         self.generator_pre.summary()
 
         self.generator_pre.fit_generator(
-            self.pretrain_data,
-            steps_per_epoch=None,
-            epochs=g_epochs)
+            self.pretrain_data_generator,
+            steps_per_epoch=max(int(np.floor(self.texts_lines / self.B)), 1),
+            epochs=g_epochs,
+            verbose=1)
         self.generator_pre.save_weights(self.g_pre_path)
         self.reflect_pre_train()
 
@@ -68,11 +71,12 @@ class Trainer(object):
             self.d_pre_path = d_pre_path
 
         print('Start Generating sentences')
-        self.agent.generator.generate_samples(self.T,
+        self.agent.generator.generate_samples(self.T, self.vocab,
             self.generate_samples, self.path_neg)
 
         self.neg_texts = load_texts(self.path_neg)
-        self.train_data = generate_train_batch(cfg, self.texts, self.neg_texts, self.vocab)
+        self.neg_texts_lines = len(self.neg_texts)
+        self.train_data_generator = generate_train_batch(self.cfg, self.texts, self.neg_texts, self.vocab)
 
         d_adam = Adam(lr)
         self.discriminator.compile(d_adam, 'binary_crossentropy')
@@ -80,15 +84,11 @@ class Trainer(object):
         print('Discriminator pre-training')
 
         self.discriminator.fit_generator(
-            self.train_data,
-            steps_per_epoch=None,
-            epochs=d_epochs)
+            self.train_data_generator,
+            steps_per_epoch=max(int(np.floor(self.neg_texts_lines / self.B)), 1),
+            epochs=d_epochs,
+            verbose=1)
         self.discriminator.save(self.d_pre_path)
-
-    def load_pre_train(self, g_pre_path, d_pre_path):
-        self.generator_pre.load_weights(g_pre_path)
-        self.reflect_pre_train()
-        self.discriminator.load_weights(d_pre_path)
 
     def load_pre_train_g(self, g_pre_path):
         self.generator_pre.load_weights(g_pre_path)
@@ -97,6 +97,9 @@ class Trainer(object):
     def load_pre_train_d(self, d_pre_path):
         self.discriminator.load_weights(d_pre_path)
 
+    def load_pre_train(self, g_pre_path, d_pre_path):
+        self.load_pre_train_g(g_pre_path)
+        self.load_pre_train_d(d_pre_path)
 
     def reflect_pre_train(self):
         i = 0

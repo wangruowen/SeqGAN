@@ -60,7 +60,7 @@ def GeneratorPretraining(cfg, vocab):
             return_seq = False  # Last LSTM return only last output (B, H)
         prev_layer = new_lstm(cfg['gen_hidden'], i + 1, return_sequences=return_seq)(prev_layer)
 
-    out = Dense(V, activation='softmax', name='DenseSoftmax')(prev_layer)
+    out = Dense(vocab.num_classes, activation='softmax', name='DenseSoftmax')(prev_layer)
     generator_pretraining = Model(input, out)
     return generator_pretraining
 
@@ -78,6 +78,7 @@ class Generator():
         '''
         self.sess = sess
         self.cfg = cfg
+        self.vocab = vocab
         self.B = cfg['batch_size']
         self.V = vocab.num_classes
         self.E = cfg['gen_embed']
@@ -256,7 +257,7 @@ class Generator():
             action[i] = np.random.choice(self.V, p=p)
         return action
 
-    def sampling_sentence(self, T, BOS=1):
+    def sampling_sentence(self, T):
         '''
         # Arguments:
             T: int, max time steps
@@ -267,18 +268,20 @@ class Generator():
         '''
         self.reset_rnn_state()
         action = np.zeros([self.B, 1], dtype=np.int32)
-        action[:, 0] = BOS
+        action[:, 0] = self.vocab.BOS
         actions = action
         for _ in range(T):
             prob = self.predict(action)
             action = self.sampling_word(prob).reshape(-1, 1)
             actions = np.concatenate([actions, action], axis=-1)
+
+            # TODO We should stop at EOS
         # Remove BOS
         actions = actions[:, 1:]
         self.reset_rnn_state()
         return actions
 
-    def generate_samples(self, T, g_data, num, output_file):
+    def generate_samples(self, T, vocab, num, output_file):
         '''
         Generate sample sentences to output file
         # Arguments:
@@ -292,7 +295,7 @@ class Generator():
             actions = self.sampling_sentence(T)
             actions_list = actions.tolist()
             for sentence_id in actions_list:
-                sentence = [g_data.id2word[action] for action in sentence_id]
+                sentence = [vocab.id2word[action] for action in sentence_id]
                 sentences.append(sentence)
         output_str = ''
         for i in range(num):
