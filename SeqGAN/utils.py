@@ -428,7 +428,6 @@ def prepare_training_indices(texts, training_percent):
 
 def create_vocabulary(cfg, texts):
     vocab = Vocab()
-    # print(texts[:10])
     vocab.build_vocab(texts, cfg['max_words'])
     return vocab
 

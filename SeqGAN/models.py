@@ -49,8 +49,9 @@ def GeneratorPretraining(cfg, vocab):
             output: word probability, shape = (B, T, V)
     '''
     # in comment, B means batch size, T means lengths of time steps.
-    input = Input(shape=(cfg['batch_size'],), dtype='int32', name='Input') # (B, T)
-    embedded = Embedding(vocab.num_classes, cfg['gen_embed'], mask_zero=True, name='Embedding')(input)  # (B, T, E)
+    input = Input(shape=(cfg['max_length'],), dtype='int32', name='Input')  # (B(not included), T)
+    embedded = Embedding(vocab.num_classes, cfg['gen_embed'],
+                         mask_zero=True, name='Embedding')(input)  # (B(not included), T, E)
 
     prev_layer = embedded
     for i in range(cfg['rnn_layers']):
@@ -88,7 +89,7 @@ class Generator():
         self.reset_rnn_state()
 
     def _build_gragh(self):
-        state_in = tf.placeholder(tf.float32, shape=(None, 1))
+        state_in = tf.placeholder(tf.float32, shape=(None, 1))  # (B, 1)
         self.init_hs, self.init_cs = [], []
         self.curr_hs, self.curr_cs = [], []
         self.next_hs, self.next_cs = [], []
@@ -96,32 +97,30 @@ class Generator():
             self.init_hs.append(tf.placeholder(tf.float32, shape=(None, self.H), name='rnn_%d_init_h' % (i + 1)))
             self.init_cs.append(tf.placeholder(tf.float32, shape=(None, self.H), name='rnn_%d_init_c' % (i + 1)))
         action = tf.placeholder(tf.float32, shape=(None, self.V))  # onehot (B, V)
-        reward = tf.placeholder(tf.float32, shape=(None, ))
+        reward = tf.placeholder(tf.float32, shape=(None, ))  # (B, )
 
         self.layers = []
 
         embedding = Embedding(self.V, self.E, mask_zero=True, name='Embedding')
-        embedded = embedding(state_in)  # (B, 1, E)
+        embedded = embedding(state_in)
         self.layers.append(embedding)
 
-        out = embedded
+        out = embedded  # (B, E)
+        # Since the state_in.shape = (B, 1), this is feeding one step at a time into the model, not the entire sequence
         for i in range(self.cfg['rnn_layers']):
-            if i < self.cfg['rnn_layers'] - 1:
-                return_seq = True  # (B, T, H)
-            else:
-                return_seq = False  # Last LSTM return only last output (B, H)
-            cur_lstm = new_lstm(self.cfg['gen_hidden'], i + 1, return_sequences=return_seq, return_state=True)
-            out, next_h, next_c = cur_lstm(out, initial_state=[self.init_hs[i], self.init_cs[i]])
+            cur_lstm = new_lstm(self.H, i + 1, return_sequences=False, return_state=True)
+            out, next_h, next_c = cur_lstm(out, initial_state=[self.init_hs[i], self.init_cs[i]])  # out.shape (B, H)
             self.next_hs.append(next_h)
             self.next_cs.append(next_c)
             self.layers.append(cur_lstm)
 
+        # For each time step, we output to a Dense with softmax. But actually, we should only need to do this at time T.
         dense = Dense(self.V, activation='softmax', name='DenseSoftmax')
         prob = dense(out)    # (B, V)
         self.layers.append(dense)
 
         log_prob = tf.log(tf.reduce_mean(prob * action, axis=-1))  # (B, )
-        loss = - log_prob * reward
+        loss = - tf.reduce_mean(log_prob * reward)  # sum up the entire batch
         optimizer = tf.train.AdamOptimizer(learning_rate=self.lr)
         minimize = optimizer.minimize(loss)
 
@@ -331,7 +330,7 @@ def Discriminator(cfg, vocab, use_highway=True):
             input: word ids, shape = (B, T)
             output: probability of true data or not, shape = (B, 1)
     '''
-    input = Input(shape=(None,), dtype='int32', name='Input')   # (B, T)
+    input = Input(shape=(cfg['max_length'],), dtype='int32', name='Input')   # (B, T)
     out = Embedding(vocab.num_classes, cfg['dis_embed'], mask_zero=True, name='Embedding')(input)  # (B, T, E)
 
     for i in range(cfg['rnn_layers']):
