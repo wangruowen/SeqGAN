@@ -91,7 +91,7 @@ class Generator():
     def _build_gragh(self):
         state_in = tf.placeholder(tf.float32, shape=(None, 1))  # (B, 1)
         self.init_hs, self.init_cs = [], []
-        self.curr_hs, self.curr_cs = [], []
+        self.curr_hs, self.curr_cs = [None] * self.cfg['rnn_layers'], [None] * self.cfg['rnn_layers']
         self.next_hs, self.next_cs = [], []
         for i in range(self.cfg['rnn_layers']):
             self.init_hs.append(tf.placeholder(tf.float32, shape=(None, self.H), name='rnn_%d_init_h' % (i + 1)))
@@ -102,14 +102,19 @@ class Generator():
         self.layers = []
 
         embedding = Embedding(self.V, self.E, mask_zero=True, name='Embedding')
-        embedded = embedding(state_in)
+        embedded = embedding(state_in)  # (B, 1, E)
         self.layers.append(embedding)
 
-        out = embedded  # (B, E)
+        out = embedded  # (B, 1, E)
         # Since the state_in.shape = (B, 1), this is feeding one step at a time into the model, not the entire sequence
         for i in range(self.cfg['rnn_layers']):
-            cur_lstm = new_lstm(self.H, i + 1, return_sequences=False, return_state=True)
-            out, next_h, next_c = cur_lstm(out, initial_state=[self.init_hs[i], self.init_cs[i]])  # out.shape (B, H)
+            # print("i = ", i)
+            if i < self.cfg['rnn_layers'] - 1:
+                return_seq = True  # out.shape = (B, 1, H)
+            else:
+                return_seq = False  # Last LSTM return only last output (B, H)
+            cur_lstm = new_lstm(self.H, i + 1, return_sequences=return_seq, return_state=True)
+            out, next_h, next_c = cur_lstm(out, initial_state=[self.init_hs[i], self.init_cs[i]])
             self.next_hs.append(next_h)
             self.next_cs.append(next_c)
             self.layers.append(cur_lstm)

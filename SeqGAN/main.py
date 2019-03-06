@@ -19,7 +19,6 @@ config ={
 
     'gen_pretrain_epoch': 10,
     'dis_pretrain_epoch': 1,
-    ''
 }
 
 dataset_path = ""

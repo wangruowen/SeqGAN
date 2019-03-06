@@ -437,6 +437,8 @@ def generate_pretrain_batch(cfg, texts, vocab, train_valid_percent=1):
 
     sequences = [[vocab.BOS] + each_seq + [vocab.EOS] for each_seq in vocab.tokenizer.texts_to_sequences(texts)]
     train_indices, validation_indices = prepare_training_indices(sequences, train_valid_percent)
+    print("Num of training: ", len(train_indices))
+    print("Num of validation: ", len(validation_indices))
 
     while True:
         np.random.shuffle(train_indices)
@@ -457,9 +459,10 @@ def generate_pretrain_batch(cfg, texts, vocab, train_valid_percent=1):
                 x = cur_seq[0: end_index]
             y = cur_seq[end_index]
 
+            print([vocab.id2word[i] for i in x])
             if y in vocab.id2word:
                 x = pad_sequences([x], maxlen=max_length, padding='post', truncating='post')
-                # print([vocab.id2word[i] for i in x[0]])
+
                 # print(x[0])
 
                 y = to_categorical(y, vocab.num_classes)
@@ -489,6 +492,8 @@ def generate_train_batch(cfg, pos_texts, neg_texts, vocab, train_valid_percent=1
     all_seq = pos_seq + neg_seq
     all_Y = [1] * len(pos_seq) + [0] * len(neg_seq)
     train_indices, validation_indices = prepare_training_indices(all_seq, train_valid_percent)
+    print("Num of training: ", len(train_indices))
+    print("Num of validation: ", len(validation_indices))
 
     while True:
         np.random.shuffle(train_indices)
@@ -511,7 +516,7 @@ def generate_train_batch(cfg, pos_texts, neg_texts, vocab, train_valid_percent=1
 
             if y in vocab.id2word:
                 x = pad_sequences([x], maxlen=max_length, padding='post', truncating='post')
-                # print([vocab.id2word[i] for i in x[0]])
+                print([vocab.id2word[i] for i in x[0]])
                 # print(x[0])
 
                 X_batch.append(x)

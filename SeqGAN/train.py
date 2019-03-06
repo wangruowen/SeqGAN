@@ -36,11 +36,11 @@ class Trainer(object):
         self.agent = Agent(sess, cfg, self.vocab)
         self.g_beta = Agent(sess, cfg, self.vocab)
         self.discriminator = Discriminator(cfg, self.vocab, use_highway=False)
-        self.env = Environment(self.discriminator, self.pretrain_data_generator, self.g_beta, n_sample=cfg['mcts_sample'])
+        self.env = Environment(cfg, self.discriminator, self.vocab, self.g_beta, n_sample=cfg['mcts_sample'])
 
         self.generator_pre = GeneratorPretraining(cfg, self.vocab)
 
-    def pre_train(self, g_epochs=3, d_epochs=1, g_weight_file=None ,d_weight_file=None,
+    def pre_train(self, g_epochs=3, d_epochs=1, g_weight_file=None, d_weight_file=None,
         g_lr=1e-3, d_lr=1e-3):
         self.pre_train_generator(g_epochs=g_epochs, g_pre_path=g_weight_file, lr=g_lr)
         self.pre_train_discriminator(d_epochs=d_epochs, d_pre_path=d_weight_file, lr=d_lr)
