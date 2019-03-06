@@ -459,7 +459,7 @@ def generate_pretrain_batch(cfg, texts, vocab, train_valid_percent=1):
                 x = cur_seq[0: end_index]
             y = cur_seq[end_index]
 
-            print([vocab.id2word[i] for i in x])
+            # print([vocab.id2word[i] for i in x])
             if y in vocab.id2word:
                 x = pad_sequences([x], maxlen=max_length, padding='post', truncating='post')
 
@@ -516,7 +516,7 @@ def generate_train_batch(cfg, pos_texts, neg_texts, vocab, train_valid_percent=1
 
             if y in vocab.id2word:
                 x = pad_sequences([x], maxlen=max_length, padding='post', truncating='post')
-                print([vocab.id2word[i] for i in x[0]])
+                # print([vocab.id2word[i] for i in x[0]])
                 # print(x[0])
 
                 X_batch.append(x)

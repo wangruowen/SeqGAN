@@ -89,15 +89,15 @@ class Generator():
         self.reset_rnn_state()
 
     def _build_gragh(self):
-        state_in = tf.placeholder(tf.float32, shape=(None, 1))  # (B, 1)
+        state_in = tf.placeholder(tf.float32, shape=(None, 1), name='state_in')  # (B, 1)
         self.init_hs, self.init_cs = [], []
         self.curr_hs, self.curr_cs = [None] * self.cfg['rnn_layers'], [None] * self.cfg['rnn_layers']
         self.next_hs, self.next_cs = [], []
         for i in range(self.cfg['rnn_layers']):
             self.init_hs.append(tf.placeholder(tf.float32, shape=(None, self.H), name='rnn_%d_init_h' % (i + 1)))
             self.init_cs.append(tf.placeholder(tf.float32, shape=(None, self.H), name='rnn_%d_init_c' % (i + 1)))
-        action = tf.placeholder(tf.float32, shape=(None, self.V))  # onehot (B, V)
-        reward = tf.placeholder(tf.float32, shape=(None, ))  # (B, )
+        action = tf.placeholder(tf.float32, shape=(None, self.V), name='action')  # onehot (B, V)
+        reward = tf.placeholder(tf.float32, shape=(None, ), name='reward')  # (B, )
 
         self.layers = []
 
@@ -179,7 +179,7 @@ class Generator():
 
         result_dict = self.sess.run({'prob': self.prob,
                                      'next_hs': self.next_hs,
-                                     'next_cs': self.next_cs})
+                                     'next_cs': self.next_cs}, feed_dict=feed_dict)
         prob = result_dict['prob']
         next_hs = result_dict['next_hs']
         next_cs = result_dict['next_cs']
@@ -235,7 +235,7 @@ class Generator():
         result_dict = self.sess.run(
             {'minimize': self.minimize, 'loss': self.loss,
              'next_hs': self.next_hs, 'next_cs': self.next_cs},
-            feed_dict)
+            feed_dict=feed_dict)
 
         loss = result_dict['loss']
         next_hs = result_dict['next_hs']
