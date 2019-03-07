@@ -27,10 +27,16 @@ class Trainer(object):
         self.path_pos = training_set_path
         self.path_neg = os.path.join(self.top, 'data', 'save', 'generated_sentences.txt')
 
-        self.texts = load_texts(self.path_pos)
-        self.texts_lines = len(self.texts)
-        self.vocab = create_vocabulary(cfg, self.texts)
-        self.pretrain_data_generator = generate_pretrain_batch(cfg, self.texts, self.vocab)
+        self.pos_texts = load_texts(self.path_pos)
+        self.vocab = create_vocabulary(cfg, self.pos_texts)
+
+        self.pos_seq = [[self.vocab.BOS] + each_seq + [self.vocab.EOS] for each_seq in
+                        self.vocab.tokenizer.texts_to_sequences(self.pos_texts)]
+        self.pos_train_indices, self.pos_validation_indices = prepare_training_indices(self.pos_seq, 1)
+        print("Num of positive training: ", len(self.pos_train_indices))
+        print("Num of positive validation: ", len(self.pos_validation_indices))
+
+        self.pretrain_data_generator = generate_pretrain_batch(cfg, self.pos_seq, self.pos_train_indices, self.vocab)
 
         self.V = self.vocab.num_classes
         self.agent = Agent(sess, cfg, self.vocab)
@@ -58,7 +64,7 @@ class Trainer(object):
 
         self.generator_pre.fit_generator(
             self.pretrain_data_generator,
-            steps_per_epoch=max(int(np.floor(self.texts_lines / self.B)), 1),
+            steps_per_epoch=max(int(np.floor(len(self.pos_train_indices) / self.B)), 1),
             epochs=g_epochs,
             verbose=1)
         self.generator_pre.save_weights(self.g_pre_path)
@@ -70,13 +76,9 @@ class Trainer(object):
         else:
             self.d_pre_path = d_pre_path
 
-        print('Start Generating sentences')
-        self.agent.generator.generate_samples(self.T, self.vocab,
-            self.generate_samples, self.path_neg)
+        all_seq, all_Y, all_train_indices = self.generate_all_samples()
 
-        self.neg_texts = load_texts(self.path_neg)
-        self.neg_texts_lines = len(self.neg_texts)
-        self.train_data_generator = generate_train_batch(self.cfg, self.texts, self.neg_texts, self.vocab)
+        self.train_data_generator = generate_train_batch(self.cfg, all_seq, all_Y, all_train_indices, self.vocab)
 
         d_adam = Adam(lr)
         self.discriminator.compile(d_adam, 'binary_crossentropy')
@@ -85,10 +87,27 @@ class Trainer(object):
 
         self.discriminator.fit_generator(
             self.train_data_generator,
-            steps_per_epoch=max(int(np.floor(self.neg_texts_lines / self.B)), 1),
+            steps_per_epoch=max(int(np.floor(len(all_train_indices) / self.B)), 1),
             epochs=d_epochs,
             verbose=1)
         self.discriminator.save(self.d_pre_path)
+
+    def generate_negative_samples(self):
+        print('Start Generating %d sentences' % self.generate_samples)
+        self.agent.generator.generate_samples(self.T, self.vocab,
+                                              self.generate_samples, self.path_neg)
+        self.neg_texts = load_texts(self.path_neg)
+        self.neg_seq = [[self.vocab.BOS] + each_seq + [self.vocab.EOS] for each_seq in
+                        self.vocab.tokenizer.texts_to_sequences(self.neg_texts)]
+
+    def generate_all_samples(self):
+        self.generate_negative_samples()
+        all_seq = self.pos_seq + self.neg_seq
+        all_Y = [1] * len(self.pos_seq) + [0] * len(self.neg_seq)
+        all_train_indices, all_validation_indices = prepare_training_indices(all_seq, 1)
+        print("Num of all training: ", len(all_train_indices))
+        print("Num of all validation: ", len(all_validation_indices))
+        return all_seq, all_Y, all_train_indices
 
     def load_pre_train_g(self, g_pre_path):
         self.generator_pre.load_weights(g_pre_path)
@@ -137,20 +156,13 @@ class Trainer(object):
                         break
             # Discriminator training
             for _ in range(d_steps):
-                self.agent.generator.generate_samples(
-                    self.T,
-                    self.g_data,
-                    self.generate_samples,
-                    self.path_neg)
-                self.d_data = DiscriminatorGenerator(
-                    path_pos=self.path_pos,
-                    path_neg=self.path_neg,
-                    B=self.B,
-                    shuffle=True)
+                all_seq, all_Y, all_train_indices = self.generate_all_samples()
+                all_train_data = generate_train_batch(self.cfg, all_seq, all_Y, all_train_indices, self.vocab)
                 self.discriminator.fit_generator(
-                    self.d_data,
-                    steps_per_epoch=None,
-                    epochs=d_epochs)
+                    all_train_data,
+                    steps_per_epoch=max(int(np.floor(len(all_train_indices) / self.B)), 1),
+                    epochs=d_epochs,
+                    verbose=1)
 
             # Update env.g_beta to agent
             self.agent.save(g_weights_path)
@@ -168,11 +180,11 @@ class Trainer(object):
         self.g_beta.load(g_path)
         self.discriminator.load_weights(d_path)
 
-    def test(self):
-        x, y = self.d_data.next()
-        pred = self.discriminator.predict(x)
-        for i in range(self.B):
-            txt = [self.g_data.id2word[id] for id in x[i].tolist()]
-            label = y[i]
-            if label == 0:
-                print('{}, {:.3f}: {}'.format(label, pred[i,0], ' '.join(txt)))
+    # def test(self):
+    #     x, y = self.d_data.next()
+    #     pred = self.discriminator.predict(x)
+    #     for i in range(self.B):
+    #         txt = [self.g_data.id2word[id] for id in x[i].tolist()]
+    #         label = y[i]
+    #         if label == 0:
+    #             print('{}, {:.3f}: {}'.format(label, pred[i,0], ' '.join(txt)))

@@ -410,17 +410,17 @@ def load_texts_from_file(file_path, header=True, delim='\n', is_csv=False):
     return texts
 
 
-def prepare_training_indices(texts, training_percent):
+def prepare_training_indices(sequences, training_percent):
     """
     Given the entire text set, shuffle and split training and validation indices.
     The indices are all combinations of text indices + token indices
     E.g., [0,0] is the first sentence's first word.
-    :param texts:
+    :param tesequencesxts:
     :param training_percent:
     :return: training_indices, validation_indices
     """
     indices_list = [np.meshgrid(np.array(i), np.arange(
-        len(text))) for i, text in enumerate(texts)]
+        len(seq))) for i, seq in enumerate(sequences)]
     indices_list = np.block(indices_list)
 
     indices_mask = np.random.rand(indices_list.shape[0]) < training_percent
@@ -431,14 +431,9 @@ def create_vocabulary(cfg, texts):
     vocab.build_vocab(texts, cfg['max_words'])
     return vocab
 
-def generate_pretrain_batch(cfg, texts, vocab, train_valid_percent=1):
+def generate_pretrain_batch(cfg, sequences, train_indices, vocab):
     max_length = cfg['max_length']
     batch_size = cfg['batch_size']
-
-    sequences = [[vocab.BOS] + each_seq + [vocab.EOS] for each_seq in vocab.tokenizer.texts_to_sequences(texts)]
-    train_indices, validation_indices = prepare_training_indices(sequences, train_valid_percent)
-    print("Num of training: ", len(train_indices))
-    print("Num of validation: ", len(validation_indices))
 
     while True:
         np.random.shuffle(train_indices)
@@ -483,17 +478,9 @@ def generate_pretrain_batch(cfg, texts, vocab, train_valid_percent=1):
                     count_batch = 0
 
 
-def generate_train_batch(cfg, pos_texts, neg_texts, vocab, train_valid_percent=1):
+def generate_train_batch(cfg, all_seq, all_Y, train_indices, vocab):
     max_length = cfg['max_length']
     batch_size = cfg['batch_size']
-
-    pos_seq = [[vocab.BOS] + each_seq + [vocab.EOS] for each_seq in vocab.tokenizer.texts_to_sequences(pos_texts)]
-    neg_seq = [[vocab.BOS] + each_seq + [vocab.EOS] for each_seq in vocab.tokenizer.texts_to_sequences(neg_texts)]
-    all_seq = pos_seq + neg_seq
-    all_Y = [1] * len(pos_seq) + [0] * len(neg_seq)
-    train_indices, validation_indices = prepare_training_indices(all_seq, train_valid_percent)
-    print("Num of training: ", len(train_indices))
-    print("Num of validation: ", len(validation_indices))
 
     while True:
         np.random.shuffle(train_indices)

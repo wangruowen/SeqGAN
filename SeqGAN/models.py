@@ -51,7 +51,7 @@ def GeneratorPretraining(cfg, vocab):
     # in comment, B means batch size, T means lengths of time steps.
     input = Input(shape=(cfg['max_length'],), dtype='int32', name='Input')  # (B(not included), T)
     embedded = Embedding(vocab.num_classes, cfg['gen_embed'],
-                         mask_zero=True, name='Embedding')(input)  # (B(not included), T, E)
+                         name='Embedding')(input)  # (B(not included), T, E) mask_zero=True,
 
     prev_layer = embedded
     for i in range(cfg['rnn_layers']):
@@ -101,7 +101,7 @@ class Generator():
 
         self.layers = []
 
-        embedding = Embedding(self.V, self.E, mask_zero=True, name='Embedding')
+        embedding = Embedding(self.V, self.E, name='Embedding')  # mask_zero=True,
         embedded = embedding(state_in)  # (B, 1, E)
         self.layers.append(embedding)
 
@@ -336,7 +336,7 @@ def Discriminator(cfg, vocab, use_highway=True):
             output: probability of true data or not, shape = (B, 1)
     '''
     input = Input(shape=(cfg['max_length'],), dtype='int32', name='Input')   # (B, T)
-    out = Embedding(vocab.num_classes, cfg['dis_embed'], mask_zero=True, name='Embedding')(input)  # (B, T, E)
+    out = Embedding(vocab.num_classes, cfg['dis_embed'], name='Embedding')(input)  # (B, T, E) mask_zero=True,
 
     for i in range(cfg['rnn_layers']):
         if i < cfg['rnn_layers'] - 1:
