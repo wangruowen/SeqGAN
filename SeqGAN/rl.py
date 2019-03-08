@@ -110,7 +110,7 @@ class Environment(object):
             return self._state[:, 1:]   # Exclude BOS
 
     def reset(self):
-        self.t = 1
+        self.t = 0
         self._state = np.zeros([self.B, 1], dtype=np.int32)
         self._state[:, 0] = self.BOS
         self.g_beta.reset()
@@ -127,9 +127,8 @@ class Environment(object):
             is_episode_end: bool
             info: dict
         '''
-        self.t = self.t + 1
-
         reward = self.Q(action, self.n_sample)
+        self.t = self.t + 1
         is_episode_end = self.t > self.T
 
         self._append_state(action)
@@ -168,9 +167,11 @@ class Environment(object):
         h, c = self.g_beta.generator.get_rnn_state()
         reward = np.zeros([self.B, 1])
         if self.t == 2:
-            Y_base = self._state    # Initial case
+            Y_base = self._state    # Initial case (B, 1)
         else:
             Y_base = self.get_state()    # (B, t-1)
+        print("Call Q: self.t = ", self.t)
+        print("Y_base.shape: ", Y_base.shape)
 
         if self.t >= self.T+1:
             Y = self._append_state(action, state=Y_base)
@@ -178,13 +179,16 @@ class Environment(object):
 
         # Rollout
         for idx_sample in range(n_sample):
+            print("n_sample: ", idx_sample)
             Y = Y_base
             self.g_beta.generator.set_rnn_state(h, c)
             y_t = self.g_beta.act(Y, epsilon=self.g_beta.eps)
             Y = self._append_state(y_t, state=Y)
-            for tau in range(self.t+1, self.T):
+            for tau in range(self.t+1, self.T + 1):
+                print("Rollout: ", tau)
                 y_tau = self.g_beta.act(Y, epsilon=self.g_beta.eps)
                 Y = self._append_state(y_tau, state=Y)
+                # print("Y.shape: ", Y.shape)
             reward += self.discriminator.predict(Y) / n_sample
 
         return reward
