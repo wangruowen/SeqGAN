@@ -51,7 +51,7 @@ class Agent(object):
         # Returns:
             action: numpy array, dtype=int, shape = (B, 1)
         '''
-        action = None
+        # action = None
         is_PAD = word == PAD
         is_EOS = word == EOS
         is_end = is_PAD.astype(np.int) + is_EOS.astype(np.int)  # Either is_PAD or is_EOS, indicates the end
@@ -104,13 +104,14 @@ class Environment(object):
         self.reset()
 
     def get_state(self):
-        if self.t == 1:
-            return self._state
-        else:
-            return self._state[:, 1:]   # Exclude BOS
+        # if self.t == 1:
+        #     return self._state
+        # else:
+        #     return self._state[:, 1:]   # Exclude BOS
+        return self._state
 
     def reset(self):
-        self.t = 0
+        self.t = 0  # Initially, t = 0 with BOS, Eventually, t = self.T
         self._state = np.zeros([self.B, 1], dtype=np.int32)
         self._state[:, 0] = self.BOS
         self.g_beta.reset()
@@ -128,8 +129,9 @@ class Environment(object):
             info: dict
         '''
         reward = self.Q(action, self.n_sample)
+        # print("reward: ", reward)
         self.t = self.t + 1
-        is_episode_end = self.t > self.T
+        is_episode_end = self.t == self.T
 
         self._append_state(action)
         next_state = self.get_state()
@@ -164,32 +166,32 @@ class Environment(object):
             action: next words, y[t], used for sentence Y[0:t].
             g_beta: Rollout policy.
         '''
-        h, c = self.g_beta.generator.get_rnn_state()
+        hs, cs = self.g_beta.generator.get_rnn_state()
         reward = np.zeros([self.B, 1])
-        if self.t == 2:
-            Y_base = self._state    # Initial case (B, 1)
-        else:
-            Y_base = self.get_state()    # (B, t-1)
+        Y_base = self._state
         print("Call Q: self.t = ", self.t)
         print("Y_base.shape: ", Y_base.shape)
 
-        if self.t >= self.T+1:
+        # If the input length is already T, then the predict D_phi(Y_1:T) is the reward.
+        # That's the second part in the Equation (4) of the original SeqGAN paper.
+        if self.t >= self.T:
+            print("self.t already >= self.T. Let's directly predict")
             Y = self._append_state(action, state=Y_base)
-            return self.discriminator.predict(Y)
+            return self.discriminator.predict(Y[:, 1:])  # Exclude BOS
 
         # Rollout
         for idx_sample in range(n_sample):
-            print("n_sample: ", idx_sample)
+            # print("n_sample: ", idx_sample)
             Y = Y_base
-            self.g_beta.generator.set_rnn_state(h, c)
-            y_t = self.g_beta.act(Y, epsilon=self.g_beta.eps)
-            Y = self._append_state(y_t, state=Y)
-            for tau in range(self.t+1, self.T + 1):
-                print("Rollout: ", tau)
-                y_tau = self.g_beta.act(Y, epsilon=self.g_beta.eps)
-                Y = self._append_state(y_tau, state=Y)
+            self.g_beta.generator.set_rnn_state(hs, cs)
+            # y_t = self.g_beta.act(Y, epsilon=self.g_beta.eps)
+            # Y = self._append_state(y_t, state=Y)
+            for _ in range(self.t + 1, self.T + 1):  # From t+1 to T
+                # print("Rollout: ", tau)
+                y_t = self.g_beta.act(Y, epsilon=self.g_beta.eps)
+                Y = self._append_state(y_t, state=Y)
                 # print("Y.shape: ", Y.shape)
-            reward += self.discriminator.predict(Y) / n_sample
+            reward += self.discriminator.predict(Y[:, 1:]) / n_sample
 
         return reward
 
