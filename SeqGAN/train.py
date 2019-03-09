@@ -94,7 +94,7 @@ class Trainer(object):
 
     def generate_negative_samples(self):
         print('Start Generating %d sentences' % self.generate_samples)
-        self.agent.generator.generate_samples(self.T, self.vocab,
+        self.agent.generator.generate_samples(self.cfg['gen_sample_length'], self.vocab,
                                               self.generate_samples, self.path_neg)
         self.neg_texts = load_texts(self.path_neg)
         self.neg_seq = [[self.vocab.BOS] + each_seq + [self.vocab.EOS] for each_seq in
@@ -133,29 +133,35 @@ class Trainer(object):
         g_weights_path='data/save/generator.pkl',
         d_weights_path='data/save/discriminator.hdf5',
         verbose=True,
-        head=1):
+        head=3):
         d_adam = Adam(self.d_lr)
         self.discriminator.compile(d_adam, 'binary_crossentropy')
         self.eps = self.init_eps
         for step in range(steps):
+            print("*" * 80)
+            print("****GAN step: ", step)
             # Generator training
-            for _ in range(g_steps):
+            for i in range(g_steps):
+                print("Train Generator at round ", i)
                 rewards = np.zeros([self.B, self.T])
+                losses = []
                 self.agent.reset()
                 self.env.reset()
                 for t in range(self.T):
                     state = self.env.get_state()
                     action = self.agent.act(state, epsilon=0.0)
                     next_state, reward, is_episode_end, info = self.env.step(action)
-                    self.agent.generator.update(state, action, reward)
+                    losses.append(self.agent.generator.update(state, action, reward))
                     rewards[:, t] = reward.reshape([self.B, ])
                     if is_episode_end:
                         if verbose:
                             print('Reward: {:.3f}, Episode end'.format(np.average(rewards)))
+                            print('Loss: ', np.average(losses))
                             self.env.render(head=head)
                         break
             # Discriminator training
-            for _ in range(d_steps):
+            for i in range(d_steps):
+                print("Train Discriminator at round ", i)
                 all_seq, all_Y, all_train_indices = self.generate_all_samples()
                 all_train_data = generate_train_batch(self.cfg, all_seq, all_Y, all_train_indices, self.vocab)
                 self.discriminator.fit_generator(
@@ -170,6 +176,7 @@ class Trainer(object):
 
             self.discriminator.save(d_weights_path)
             self.eps = max(self.eps*(1- float(step) / steps * 4), 1e-4)
+            print("\n")
 
     def save(self, g_path, d_path):
         self.agent.save(g_path)

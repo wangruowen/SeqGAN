@@ -299,7 +299,11 @@ class Generator():
             actions = self.sampling_sentence(T)
             actions_list = actions.tolist()
             for sentence_id in actions_list:
-                sentence = [vocab.id2word[action] for action in sentence_id]
+                sentence = []
+                for action in sentence_id:
+                    if action == vocab.EOS:
+                        break
+                    sentence.append(vocab.id2word[action])
                 sentences.append(sentence)
         output_str = ''
         for i in range(num):

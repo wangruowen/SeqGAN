@@ -143,7 +143,7 @@ class Environment(object):
         for i in range(head):
             ids = self.get_state()[i]
             words = [self.vocab.id2word[id] for id in ids.tolist()]
-            print(ids.tolist())
+            # print(ids.tolist())
             print(' '.join(words))
         print('-' * 80)
 
@@ -169,8 +169,8 @@ class Environment(object):
         hs, cs = self.g_beta.generator.get_rnn_state()
         reward = np.zeros([self.B, 1])
         Y_base = self._state
-        print("Call Q: self.t = ", self.t)
-        print("Y_base.shape: ", Y_base.shape)
+        # print("Call Q at self.t = ", self.t)
+        # print("Y_base.shape: ", Y_base.shape)
 
         # If the input length is already T, then the predict D_phi(Y_1:T) is the reward.
         # That's the second part in the Equation (4) of the original SeqGAN paper.
@@ -179,7 +179,7 @@ class Environment(object):
             Y = self._append_state(action, state=Y_base)
             return self.discriminator.predict(Y[:, 1:])  # Exclude BOS
 
-        # Rollout
+        # Monte Carlo Rollout
         for idx_sample in range(n_sample):
             # print("n_sample: ", idx_sample)
             Y = Y_base
