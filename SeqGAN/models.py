@@ -9,6 +9,7 @@ from keras.layers.wrappers import TimeDistributed
 from keras.utils import to_categorical
 import tensorflow as tf
 import pickle
+from .utils import *
 
 def new_lstm(rnn_size, layer_num, use_bidirectional=False, return_sequences=True, return_state=False):
     use_cudnnlstm = K.backend() == 'tensorflow' and len(K.tensorflow_backend._get_available_gpus()) > 0
@@ -50,7 +51,7 @@ def GeneratorPretraining(cfg, vocab):
     '''
     # in comment, B means batch size, T means lengths of time steps.
     input = Input(shape=(cfg['max_length'],), dtype='int32', name='Input')  # (B(not included), T)
-    embedded = Embedding(vocab.num_classes, cfg['gen_embed'],
+    embedded = Embedding(vocab.num_classes, cfg['gen_embed'], input_length=cfg['max_length'],
                          name='Embedding')(input)  # (B(not included), T, E) mask_zero=True,
 
     prev_layer = embedded
@@ -62,7 +63,7 @@ def GeneratorPretraining(cfg, vocab):
         prev_layer = new_lstm(cfg['gen_hidden'], i + 1, return_sequences=return_seq)(prev_layer)
 
     out = Dense(vocab.num_classes, activation='softmax', name='DenseSoftmax')(prev_layer)
-    generator_pretraining = Model(input, out)
+    generator_pretraining = Model(inputs=input, outputs=out)
     return generator_pretraining
 
 class Generator():
@@ -81,6 +82,7 @@ class Generator():
         self.cfg = cfg
         self.vocab = vocab
         self.B = cfg['batch_size']
+        self.T = cfg['max_length']
         self.V = vocab.num_classes
         self.E = cfg['gen_embed']
         self.H = cfg['gen_hidden']
@@ -139,10 +141,12 @@ class Generator():
         self.init_op = tf.global_variables_initializer()
         self.sess.run(self.init_op)
 
-    def reset_rnn_state(self):
+    def reset_rnn_state(self, batch_size=None):
+        if batch_size is None:
+            batch_size = self.B
         for i in range(self.cfg['rnn_layers']):
-            self.curr_hs[i] = np.zeros([self.B, self.H])
-            self.curr_cs[i] = np.zeros([self.B, self.H])
+            self.curr_hs[i] = np.zeros([batch_size, self.H])
+            self.curr_cs[i] = np.zeros([batch_size, self.H])
 
     def set_rnn_state(self, hs, cs):
         '''
@@ -270,20 +274,33 @@ class Generator():
         # Returns:
             actions: numpy array, dtype=int, shape = (B, T)
         '''
-        self.reset_rnn_state()
-        action = np.zeros([self.B, 1], dtype=np.int32)
-        action[:, 0] = self.vocab.BOS
-        actions = action
-        for _ in range(T):
-            prob = self.predict(action)
-            action = self.sampling_word(prob).reshape(-1, 1)
-            actions = np.concatenate([actions, action], axis=-1)
+        # Because each generated sentence may have different length, it is easy to
+        # use a loop than batch
+        sentences = []
+        for _ in range(self.B):
+            self.reset_rnn_state(1)  # Batchsize = 1
 
-            # TODO We should stop at EOS
-        # Remove BOS
-        actions = actions[:, 1:]
-        self.reset_rnn_state()
-        return actions
+            # Warm up the RNN
+            # Note, this is important, since this model's weight is copied from
+            # the pre-trained generator, which assumes an input of T time steps.
+            # We need to do the same thing here to warm up the RNN (basically, the hidden and cell state)
+            pad = np.array([self.vocab.PAD]).reshape(1, 1)
+            for _ in range(self.T - 1):
+                self.predict(pad)
+
+            action = np.array([self.vocab.BOS]).reshape(1, 1)
+            actions = action
+            for _ in range(T):
+                prob = self.predict(action)  # (1, V)
+                action = sample_one_word(prob)
+                if action == self.vocab.EOS:
+                    break
+                action = action.reshape(1, 1)
+                actions = np.concatenate([actions, action], axis=-1)
+
+            sentences.append(actions[0, 1:])  # Remove BOS
+
+        return sentences  # list of 1D arrays
 
     def generate_samples(self, T, vocab, num, output_file):
         '''
@@ -296,8 +313,8 @@ class Generator():
         '''
         sentences=[]
         for _ in range(num // self.B + 1):
-            actions = self.sampling_sentence(T)
-            actions_list = actions.tolist()
+            actions_list = self.sampling_sentence(T)
+            # actions_list = actions.tolist()
             for sentence_id in actions_list:
                 sentence = []
                 for action in sentence_id:

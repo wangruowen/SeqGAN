@@ -191,9 +191,9 @@ class Environment(object):
                 y_t = self.g_beta.act(Y, epsilon=self.g_beta.eps)
                 Y = self._append_state(y_t, state=Y)
                 # print("Y.shape: ", Y.shape)
-            reward += self.discriminator.predict(Y[:, 1:]) / n_sample
+            reward += self.discriminator.predict(Y[:, 1:])
 
-        return reward
+        return reward / n_sample
 
 
     def _append_state(self, word, state=None):

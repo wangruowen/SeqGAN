@@ -9,6 +9,7 @@ from keras.utils import Sequence
 from keras.utils.np_utils import to_categorical
 from keras.preprocessing.text import Tokenizer, text_to_word_sequence
 from keras.preprocessing.sequence import pad_sequences
+import keras.backend as K
 
 
 class Vocab:
@@ -456,7 +457,7 @@ def generate_pretrain_batch(cfg, sequences, train_indices, vocab):
 
             # print([vocab.id2word[i] for i in x])
             if y in vocab.id2word:
-                x = pad_sequences([x], maxlen=max_length, padding='post', truncating='post')
+                x = pad_sequences([x], maxlen=max_length)
 
                 # print(x[0])
 
@@ -502,7 +503,7 @@ def generate_train_batch(cfg, all_seq, all_Y, train_indices, vocab):
             y = all_Y[line_index]
 
             if y in vocab.id2word:
-                x = pad_sequences([x], maxlen=max_length, padding='post', truncating='post')
+                x = pad_sequences([x], maxlen=max_length)
                 # print([vocab.id2word[i] for i in x[0]])
                 # print(x[0])
 
@@ -520,3 +521,40 @@ def generate_train_batch(cfg, all_seq, all_Y, train_indices, vocab):
                     X_batch = []
                     Y_batch = []
                     count_batch = 0
+
+def sample_one_word(preds, temperature=0.5):
+    '''
+    Samples predicted probabilities of the next character to allow
+    for the network to show "creativity."
+    We assume the preds shape is (1, V)
+    '''
+    preds = preds[0]
+    preds = np.asarray(preds).astype('float64')
+    # print(preds.shape)
+    # print(preds[:10])
+    # print(np.sum(preds))
+
+    if temperature is None or temperature == 0.0:
+        return np.argmax(preds)
+
+    preds = np.log(preds + K.epsilon()) / temperature
+    exp_preds = np.exp(preds)
+    preds = exp_preds / np.sum(exp_preds)
+    probas = np.random.multinomial(1, preds, 1)
+
+    index = np.argmax(probas)
+
+    # prevent function from being able to choose 0 (placeholder)
+    # choose 2nd best index from preds
+    if index == 0:
+        index = np.argsort(preds)[-2]
+
+    return index
+
+def encode_sequence(text, vocab, maxlen):
+    '''
+    Encodes a text into the corresponding encoding for prediction with
+    the model.
+    '''
+    encoded = np.array([vocab.word2id[x] for x in text])
+    return pad_sequences([encoded], maxlen=maxlen, value=0)

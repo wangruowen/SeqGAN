@@ -58,7 +58,7 @@ class Trainer(object):
             self.g_pre_path = g_pre_path
 
         g_adam = Adam(lr)
-        self.generator_pre.compile(g_adam, 'categorical_crossentropy')
+        self.generator_pre.compile(optimizer=g_adam, loss='categorical_crossentropy')
         print('Generator pre-training')
         self.generator_pre.summary()
 
@@ -92,6 +92,29 @@ class Trainer(object):
             verbose=1)
         self.discriminator.save(self.d_pre_path)
 
+    def generate_negative_samples_using_pretrain(self, generate_num):
+        print('Use pretrained Generator to generate %d sentences' % self.generate_samples)
+        sentences = []
+        for _ in range(generate_num):
+            text = [self.vocab.BOS_TOKEN]
+
+            while len(text) <= self.cfg['gen_sample_length']:
+                encoded_text = encode_sequence(text[-self.T:], self.vocab, self.T)
+                print("encoded_text: ", encoded_text)
+                print("cur text: ", text)
+                prob = self.generator_pre.predict(encoded_text, batch_size=1)  # (1, V)
+                index = sample_one_word(prob)  # () Scalar
+                if index == self.vocab.EOS:
+                    break
+                text.append(self.vocab.id2word[index])
+            sentences.append(text[1:])
+
+        output_str = ''
+        for i in range(generate_num):
+            output_str += ' '.join(sentences[i]) + '\n'
+        with open(self.path_neg, 'w', encoding='utf-8') as f:
+            f.write(output_str)
+
     def generate_negative_samples(self):
         print('Start Generating %d sentences' % self.generate_samples)
         self.agent.generator.generate_samples(self.cfg['gen_sample_length'], self.vocab,
@@ -124,6 +147,7 @@ class Trainer(object):
         i = 0
         for layer in self.generator_pre.layers:
             if len(layer.get_weights()) != 0:
+                # print(layer.name)
                 w = layer.get_weights()
                 self.agent.generator.layers[i].set_weights(w)
                 self.g_beta.generator.layers[i].set_weights(w)
