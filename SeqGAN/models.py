@@ -126,6 +126,8 @@ class Generator():
         prob = dense(out)    # (B, V)
         self.layers.append(dense)
 
+        # ATTENTION! This loss function causes mode collapse problem!
+        # We need to come up a new loss function to train
         log_prob = tf.log(tf.reduce_mean(prob * action, axis=-1))  # (B, )
         loss = - tf.reduce_mean(log_prob * reward)  # sum up the entire batch
         optimizer = tf.train.AdamOptimizer(learning_rate=self.lr)
@@ -147,6 +149,21 @@ class Generator():
         for i in range(self.cfg['rnn_layers']):
             self.curr_hs[i] = np.zeros([batch_size, self.H])
             self.curr_cs[i] = np.zeros([batch_size, self.H])
+
+    def warm_up_rnn_state(self, batch_size=None):
+        """
+        Warm up the RNN
+        Note, this is important, since this model's weight is copied from
+        the pre-trained generator, which assumes an input of T time steps.
+        We need to do the same thing here to warm up the RNN (basically, the hidden and cell state)
+        :param batch_size:
+        :return:
+        """
+        if batch_size is None:
+            batch_size = self.B
+        pad = np.zeros((batch_size, 1))
+        for _ in range(self.T - 1):
+            self.predict(pad)
 
     def set_rnn_state(self, hs, cs):
         '''
@@ -256,14 +273,9 @@ class Generator():
         # Arguments:
             prob: numpy array, dtype=float, shape = (B, V),
         # Returns:
-            action: numpy array, dtype=int, shape = (B, )
+            action: numpy array, dtype=int, shape = (B, 1)
         '''
-        # TODO We should use tf.distributions.Multinomial to avoid for loop and also add temperature
-        action = np.zeros((self.B,), dtype=np.int32)
-        for i in range(self.B):
-            p = prob[i]
-            action[i] = np.random.choice(self.V, p=p)
-        return action
+        return sample_one_word(prob)
 
     def sampling_sentence(self, T):
         '''
@@ -292,10 +304,10 @@ class Generator():
             actions = action
             for _ in range(T):
                 prob = self.predict(action)  # (1, V)
-                action = sample_one_word(prob)
-                if action == self.vocab.EOS:
+                action = sample_one_word(prob)  # (1, 1)
+                if action[0, 0] == self.vocab.EOS:
                     break
-                action = action.reshape(1, 1)
+                # action = action.reshape(1, 1)
                 actions = np.concatenate([actions, action], axis=-1)
 
             sentences.append(actions[0, 1:])  # Remove BOS

@@ -1,5 +1,5 @@
 from .models import Generator, GeneratorPretraining, Discriminator
-from .utils import DiscriminatorGenerator
+from .utils import *
 import keras.backend as K
 import numpy as np
 
@@ -38,7 +38,7 @@ class Agent(object):
         # Returns:
             action: numpy array, dtype=int, shape = (B, 1)
         '''
-        word = state[:, -1].reshape([-1, 1])
+        word = state[:, -1].reshape([-1, 1])  # (B, 1)
         return self._act_on_word(word, epsilon=epsilon, deterministic=deterministic)
 
     def _act_on_word(self, word, epsilon=0, deterministic=False, PAD=0, EOS=2):
@@ -60,15 +60,16 @@ class Agent(object):
         if np.random.rand() <= epsilon:
             action = np.random.randint(low=0, high=self.num_actions, size=(self.B, 1))
         elif not deterministic:
-            probs = self.generator.predict(word)
-            action = self.generator.sampling_word(probs).reshape([self.B, 1])
+            probs = self.generator.predict(word)  # (B, V)
+            action = sample_one_word(probs)  # (B, 1)
         else:
             probs = self.generator.predict(word) # (B, T)
             action = np.argmax(probs, axis=-1).reshape([self.B, 1])
         return action * is_end  # if it is end, return 0.0
 
-    def reset(self):
+    def reset_and_warm_up(self):
         self.generator.reset_rnn_state()
+        self.generator.warm_up_rnn_state()
 
     def save(self, path):
         self.generator.save(path)
@@ -101,7 +102,7 @@ class Environment(object):
         self.BOS = vocab.BOS
         self.discriminator = discriminator
         self.g_beta = g_beta
-        self.reset()
+        self.reset_and_warm_up()
 
     def get_state(self):
         # if self.t == 1:
@@ -110,11 +111,11 @@ class Environment(object):
         #     return self._state[:, 1:]   # Exclude BOS
         return self._state
 
-    def reset(self):
+    def reset_and_warm_up(self):
         self.t = 0  # Initially, t = 0 with BOS, Eventually, t = self.T
         self._state = np.zeros([self.B, 1], dtype=np.int32)
         self._state[:, 0] = self.BOS
-        self.g_beta.reset()
+        self.g_beta.reset_and_warm_up()
 
     def step(self, action):
         '''

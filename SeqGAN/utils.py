@@ -526,30 +526,38 @@ def sample_one_word(preds, temperature=0.5):
     '''
     Samples predicted probabilities of the next character to allow
     for the network to show "creativity."
-    We assume the preds shape is (1, V)
+    # Arguments:
+        preds: shape = (B, V)
+    # Returns:
+        index: shape = (B, 1)
     '''
-    preds = preds[0]
+    B, V = preds.shape
     preds = np.asarray(preds).astype('float64')
     # print(preds.shape)
     # print(preds[:10])
     # print(np.sum(preds))
 
     if temperature is None or temperature == 0.0:
-        return np.argmax(preds)
+        return np.argmax(preds, axis=-1).reshape(-1, 1)
 
     preds = np.log(preds + K.epsilon()) / temperature
     exp_preds = np.exp(preds)
-    preds = exp_preds / np.sum(exp_preds)
-    probas = np.random.multinomial(1, preds, 1)
+    preds = exp_preds / np.sum(exp_preds, axis=-1, keepdims=True)  # shape not changed, still (B, V)
 
-    index = np.argmax(probas)
+    # TODO Vectorize multinomial https://stackoverflow.com/questions/36952419/vectorizing-numpy-random-multinomial
+    indices = np.zeros(shape=(preds.shape[0], 1), dtype='int32')
+    for i in range(B):
+        # probas = np.random.multinomial(1, preds[i], 1)
+        index = np.random.choice(V, p=preds[i])
+        # index = np.argmax(probas)
 
-    # prevent function from being able to choose 0 (placeholder)
-    # choose 2nd best index from preds
-    if index == 0:
-        index = np.argsort(preds)[-2]
+        # prevent function from being able to choose 0 (placeholder)
+        # choose 2nd best index from preds
+        while index == 0:
+            index = np.random.choice(V, p=preds[i])
+        indices[i, 0] = index
 
-    return index
+    return indices
 
 def encode_sequence(text, vocab, maxlen):
     '''

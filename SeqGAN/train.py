@@ -103,7 +103,7 @@ class Trainer(object):
                 print("encoded_text: ", encoded_text)
                 print("cur text: ", text)
                 prob = self.generator_pre.predict(encoded_text, batch_size=1)  # (1, V)
-                index = sample_one_word(prob)  # () Scalar
+                index = sample_one_word(prob[0])  # () Scalar
                 if index == self.vocab.EOS:
                     break
                 text.append(self.vocab.id2word[index])
@@ -169,11 +169,11 @@ class Trainer(object):
                 print("Train Generator at round ", i)
                 rewards = np.zeros([self.B, self.T])
                 losses = []
-                self.agent.reset()
-                self.env.reset()
+                self.agent.reset_and_warm_up()
+                self.env.reset_and_warm_up()
                 for t in range(self.T):
-                    state = self.env.get_state()
-                    action = self.agent.act(state, epsilon=0.0)
+                    state = self.env.get_state()  # (B, 1/T)
+                    action = self.agent.act(state, epsilon=0.0)  # (B, 1)
                     next_state, reward, is_episode_end, info = self.env.step(action)
                     losses.append(self.agent.generator.update(state, action, reward))
                     rewards[:, t] = reward.reshape([self.B, ])
